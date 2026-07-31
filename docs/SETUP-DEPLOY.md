@@ -46,38 +46,49 @@
 > **หมายเหตุสำคัญ**: repo `mcr-stock-count` บน GitHub มี root อยู่ที่โฟลเดอร์ `supabase-web` — ไม่ใช่
 > โฟลเดอร์ "Count Stock" ดังนั้นโฟลเดอร์ `asset-verify` **ไม่ได้อยู่ใน repo เดิม** เลือกทางใดทางหนึ่ง:
 
-### ทาง A — อัปโหลดไฟล์ตรงๆ (ง่ายที่สุด ไม่ต้องใช้ git) ✅ ใช้วิธีนี้
+### ✅ วิธีที่ใช้จริง — เชื่อม GitHub (แก้โค้ดแล้วเว็บอัปเดตเองอัตโนมัติ เหมือน MCR)
 
-1. เข้า https://dash.cloudflare.com → **Workers & Pages** → **Create**
-2. ในหน้า "Ship something new" กดปุ่มล่างสุด **📂 Upload your static files**
-3. **Project name**: `asset-verify-brh3`
-4. ลาก**เนื้อในโฟลเดอร์** `asset-verify` ไปวาง — เปิดโฟลเดอร์ → `Ctrl+A` → ลากทั้งหมด
-   (ต้องเห็น `index.html` อยู่ชั้นบนสุดของรายการ ไม่ใช่ `asset-verify/index.html`)
-5. กด **Deploy** → ได้ URL `https://asset-verify-brh3.<บัญชี>.workers.dev`
-6. เวลาแก้ไขโค้ดภายหลัง: เข้า project เดิม → **Create new deployment** → ลากไฟล์ชุดใหม่ทับ
+**ทำครั้งเดียว:**
 
-> โฟลเดอร์ `asset-verify` ไม่มี `.git` อยู่ข้างใน จึงไม่เจอปัญหาไฟล์ `.git` โดนเสิร์ฟแบบตอนทำ MCR
-> ถ้าอยากได้โดเมน `.pages.dev` ให้กด **Get started** ตรง "Looking to deploy Pages?" ท้ายหน้าแล้วเลือก
-> Direct Upload แทน — ผลลัพธ์เหมือนกัน ต่างแค่ชื่อโดเมน
-
-### ทาง B — เชื่อม GitHub (deploy อัตโนมัติทุกครั้งที่แก้โค้ด)
-
-1. สร้าง repo ใหม่ชื่อ `asset-verify-brh3` (private) ที่ https://github.com/new
-2. ในเครื่อง เปิด Git Bash ที่โฟลเดอร์ `asset-verify` แล้วรัน (แก้ URL เป็นของ repo ที่เพิ่งสร้าง):
+1. สร้าง repo ใหม่ที่ https://github.com/new
+   - **Repository name**: `asset-verify-brh3`
+   - เลือก **Private**
+   - **อย่าติ๊ก** Add a README / .gitignore / license (ต้องเป็น repo ว่างเปล่า)
+   - กด **Create repository**
+2. ในเครื่อง เปิด Git Bash ที่โฟลเดอร์ `asset-verify` แล้วรัน (โฟลเดอร์นี้ init + commit ไว้ให้แล้ว):
 
 ```bash
-git init -b main && git add . && git commit -m "Asset verification app for BRH3" && git remote add origin https://github.com/thiraphatsa-hash/asset-verify-brh3.git && git push -u origin main
+git remote add origin https://github.com/thiraphatsa-hash/asset-verify-brh3.git && git push -u origin main
 ```
 
-3. Cloudflare → **Workers & Pages** → **Create** → แท็บ **Pages** → **Connect to Git** →
-   เลือก repo `asset-verify-brh3`
+3. Cloudflare → **Workers & Pages** → **Create** → ท้ายหน้าตรง "Looking to deploy Pages?" กด
+   **Get started** → **Connect to Git** → เลือก repo `asset-verify-brh3`
+   (ถ้า Cloudflare ยังไม่เห็น repo ใหม่ ให้กด **Add account / Configure repositories** แล้วให้สิทธิ์ repo นี้)
 4. ตั้งค่า build:
-   - **Project name**: `asset-verify-brh3`
+   - **Project name**: `asset-verify-brh3` → ได้ URL `https://asset-verify-brh3.pages.dev`
    - **Production branch**: `main`
    - **Framework preset**: `None`
    - **Build command**: เว้นว่าง
    - **Build output directory**: เว้นว่าง (ไฟล์อยู่ที่ root ของ repo อยู่แล้ว)
 5. กด **Save and Deploy**
+
+**ต่อจากนี้ทุกครั้งที่แก้โค้ด** แค่ commit + push แล้ว Cloudflare จะ build ใหม่เองภายใน ~1 นาที:
+
+```bash
+git add -A && git commit -m "อธิบายสิ่งที่แก้" && git push
+```
+
+> ⚠ **ทุกไฟล์ใน repo นี้ถูกเสิร์ฟเป็นไฟล์สาธารณะบนเว็บ** — ห้ามวางไฟล์รหัสผ่าน คีย์ลับ หรือข้อมูลส่วนตัว
+> ในโฟลเดอร์นี้เด็ดขาด ไฟล์ `.gitignore` กันไฟล์ชื่อที่มีคำว่า password/secret/.env และไฟล์ Excel ไว้ให้แล้ว
+> แต่ทางที่ปลอดภัยที่สุดคือไม่เก็บไฟล์พวกนั้นไว้ในโฟลเดอร์นี้ตั้งแต่แรก
+>
+> (`config.js` มี anon key อยู่ — อันนี้เปิดเผยได้ตามการออกแบบของ Supabase เหมือน MCR ไม่ใช่ความลับ)
+
+### ทางสำรอง — อัปโหลดไฟล์ตรงๆ (ไม่ต้องใช้ git)
+
+Cloudflare → **Workers & Pages** → **Create** → **📂 Upload your static files** → ตั้งชื่อ →
+ลากเนื้อในโฟลเดอร์ `asset-verify` (ต้องเห็น `index.html` อยู่ชั้นบนสุด ไม่ใช่ `asset-verify/index.html`)
+→ **Deploy** · เวลาแก้ไขต้องเข้ามาลากไฟล์ใหม่ทับเองทุกครั้ง
 
 ## ขั้นที่ 5 — ตั้งค่า URL สำหรับลิงก์รีเซ็ตรหัสผ่าน
 
