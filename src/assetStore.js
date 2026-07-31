@@ -103,6 +103,16 @@ const AssetStore = (function () {
     fail(error);
     return rowsToObjs(data);
   }
+  /**
+   * ยืนยันอีเมลแทนผู้ใช้ (เรียกตอน admin อนุมัติบัญชี)
+   * best-effort: ถ้ายังไม่ได้ติดตั้งฟังก์ชัน ก็ไม่ให้การอนุมัติล้มเหลว
+   */
+  async function confirmUserEmail(id) {
+    if (!id) return { skipped: true };
+    const { error } = await getClient().rpc('admin_confirm_email', { target: id });
+    if (error) return { skipped: true, message: error.message };
+    return { success: true };
+  }
   /** ลบบัญชีถาวรผ่าน RPC admin_delete_user (ตรวจสิทธิ์ admin ฝั่ง DB) */
   async function deleteUserAccount(id) {
     if (!id) throw new Error('ไม่พบบัญชี');
@@ -278,7 +288,7 @@ const AssetStore = (function () {
   return {
     getClient, uuid,
     signIn, signOut, signUp, getSession, currentUser, getMyProfile,
-    sendPasswordReset, listProfiles, updateProfile, deleteUserAccount,
+    sendPasswordReset, listProfiles, updateProfile, deleteUserAccount, confirmUserEmail,
     listSessions, createSession, updateSession, deleteSession,
     loadMaster, importAssets,
     loadLogs, loadLogsSummary, saveVerify, deleteLog, subscribeLogs, unsubscribe,

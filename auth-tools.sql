@@ -25,6 +25,22 @@ end $$;
 revoke all on function admin_delete_user(uuid) from public;
 grant execute on function admin_delete_user(uuid) to authenticated;
 
+-- ── 1.5) ยืนยันอีเมลแทนผู้ใช้ (เฉพาะ admin) ──────────────────────────────────
+-- ใช้ตอน admin กดอนุมัติบัญชีในแอป — แอปจะเรียกฟังก์ชันนี้ให้อัตโนมัติ
+-- ทำให้ไม่ต้องพึ่งสวิตช์ "Confirm email" ในหน้า Dashboard (บางเวอร์ชันไม่มีให้ปิด)
+create or replace function admin_confirm_email(target uuid)
+returns void language plpgsql security definer set search_path = public, auth as $$
+begin
+  if not is_admin() then
+    raise exception 'เฉพาะผู้ดูแลระบบ (admin) เท่านั้น';
+  end if;
+  update auth.users
+     set email_confirmed_at = coalesce(email_confirmed_at, now())
+   where id = target;
+end $$;
+revoke all on function admin_confirm_email(uuid) from public;
+grant execute on function admin_confirm_email(uuid) to authenticated;
+
 -- ── 2) ยืนยันอีเมลให้บัญชีที่สมัครไว้แล้วทั้งหมด ────────────────────────────────
 -- ใช้เมื่อเจอ error "Email not confirmed" ตอน login
 -- (ทางแก้ถาวรคือปิดสวิตช์ Confirm email — ดู docs/SETUP-DEPLOY.md ขั้นที่ 6)

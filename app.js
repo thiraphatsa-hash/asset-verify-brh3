@@ -1865,6 +1865,8 @@ const App = (() => {
   async function approveAccess(id) {
     try {
       busy('กำลังอนุมัติ...');
+      // ยืนยันอีเมลให้ด้วย เผื่อโปรเจกต์เปิด "Confirm email" ไว้ (ไม่งั้น login ไม่ได้)
+      await AssetStore.confirmUserEmail(id);
       await AssetStore.updateProfile({ id: id, role: 'counter', active: true });
       await loadUsers(true);
       const left = state.users.filter((u) => !u.active);
@@ -1920,6 +1922,8 @@ const App = (() => {
     try {
       const payload = { id: id };
       payload[field] = value;
+      // เปิดใช้งานบัญชี = ยืนยันอีเมลให้ด้วย กันติด "Email not confirmed" ตอน login
+      if (field === 'active' && value) await AssetStore.confirmUserEmail(id);
       await AssetStore.updateProfile(payload);
       toast('บันทึกแล้ว', 'success');
       loadUsers(true);
