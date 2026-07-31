@@ -1,0 +1,19 @@
+# ⚠ ทุกไฟล์ใน repo นี้จะถูก deploy ขึ้นเว็บสาธารณะ — ห้ามมีความลับเด็ดขาด
+# กันไฟล์รหัสผ่าน/คีย์ลับหลุดขึ้นเว็บโดยไม่ตั้งใจ
+*Password*.txt
+*password*.txt
+*.env
+.env*
+*service_role*
+secrets*
+credentials*
+
+# ไฟล์ขยะของระบบ
+Thumbs.db
+desktop.ini
+.DS_Store
+*.log
+
+# ไฟล์ข้อมูลจริง (ทะเบียนทรัพย์สิน) — นำเข้าผ่านหน้าเว็บ ไม่ต้องเก็บใน repo
+*.xls
+*.xlsx

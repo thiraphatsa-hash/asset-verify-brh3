@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ตรวจนับทรัพย์สิน — ตั้งรหัสผ่านใหม่</title>
+  <style>
+    body { font-family: system-ui, "Segoe UI", Tahoma, sans-serif; background: #123B2E;
+      display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; padding: 16px; }
+    .card { background: #fff; max-width: 360px; width: 100%; border-radius: 16px; padding: 28px 22px;
+      text-align: center; color: #123B2E; }
+    h2 { margin: 6px 0 14px; }
+    label { display: block; text-align: left; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+    input { width: 100%; margin-top: 4px; padding: 11px; border: 1px solid #c3cdd9; border-radius: 10px; box-sizing: border-box; }
+    button { width: 100%; background: #1B5E43; color: #fff; border: 0; border-radius: 10px; padding: 12px; font-weight: 700; cursor: pointer; }
+    .msg { font-size: 13px; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; text-align: left; }
+    .err { background: #fee2e2; color: #DC2626; } .ok { background: #ecfdf5; color: #047857; }
+    .hidden { display: none; } a { color: #1B5E43; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>ตั้งรหัสผ่านใหม่</h2>
+    <div id="state" class="msg">กำลังตรวจสอบลิงก์...</div>
+    <form id="form" class="hidden" onsubmit="event.preventDefault(); submitReset();">
+      <label>รหัสผ่านใหม่<input id="pw" type="password" minlength="6" required></label>
+      <button type="submit">บันทึกรหัสใหม่</button>
+    </form>
+    <p id="done" class="hidden">เสร็จแล้ว — <a href="index.html">กลับไปเข้าสู่ระบบ</a></p>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script>
+    const cfg = window.ASSET_CONFIG || {};
+    const client = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+    const stateEl = document.getElementById('state');
+    function ready() {
+      stateEl.className = 'msg ok'; stateEl.textContent = 'ยืนยันลิงก์แล้ว ตั้งรหัสใหม่ได้';
+      document.getElementById('form').classList.remove('hidden');
+    }
+    client.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') ready();
+    });
+    (async () => {
+      const { data } = await client.auth.getSession();
+      if (data && data.session) ready();
+      else setTimeout(async () => {
+        const s = await client.auth.getSession();
+        if (!(s.data && s.data.session)) {
+          stateEl.className = 'msg err';
+          stateEl.textContent = 'ลิงก์ไม่ถูกต้องหรือหมดอายุ กรุณาขอลิงก์รีเซ็ตใหม่จากหน้าเข้าสู่ระบบ';
+        }
+      }, 1500);
+    })();
+    async function submitReset() {
+      const pw = document.getElementById('pw').value;
+      const { error } = await client.auth.updateUser({ password: pw });
+      if (error) { stateEl.className = 'msg err'; stateEl.textContent = error.message; return; }
+      document.getElementById('form').classList.add('hidden');
+      stateEl.classList.add('hidden');
+      document.getElementById('done').classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>

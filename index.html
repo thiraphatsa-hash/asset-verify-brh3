@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#123B2E">
+  <title>ตรวจนับทรัพย์สิน BRH3</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="appLoader" class="app-loader">
+    <div class="loader-mark">ASSET</div>
+    <div class="spinner"></div>
+    <p>กำลังเตรียมระบบตรวจนับทรัพย์สิน...</p>
+  </div>
+
+  <!-- ── เข้าสู่ระบบ / สมัครสมาชิก ─────────────────────────────────────────── -->
+  <div id="loginOverlay" class="login-overlay hidden">
+    <form class="login-card" onsubmit="event.preventDefault(); App.submitAuth();">
+      <div class="loader-mark">ASSET</div>
+      <h2 id="authTitle">เข้าสู่ระบบ</h2>
+      <p id="authAppName">ตรวจนับทรัพย์สิน BRH3</p>
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab active" data-mode="login" onclick="App.setAuthMode('login')">เข้าสู่ระบบ</button>
+        <button type="button" class="auth-tab" data-mode="signup" onclick="App.setAuthMode('signup')">สมัครสมาชิก</button>
+      </div>
+      <label>อีเมล<input id="loginEmail" name="email" type="email" autocomplete="username" required></label>
+      <label id="passwordRow">รหัสผ่าน<input id="loginPassword" name="password" type="password" autocomplete="current-password"></label>
+      <div id="loginError" class="login-error hidden"></div>
+      <div id="loginInfo" class="login-info hidden"></div>
+      <button id="loginButton" class="primary-button full-width" type="submit">เข้าสู่ระบบ</button>
+      <button id="forgotLink" type="button" class="link-button" onclick="App.setAuthMode('forgot')">ลืมรหัสผ่าน?</button>
+    </form>
+  </div>
+
+  <div id="pendingOverlay" class="login-overlay hidden">
+    <div class="login-card">
+      <div class="loader-mark">ASSET</div>
+      <h2>บัญชีรออนุมัติ</h2>
+      <p>ส่งคำขอใช้งานถึงผู้ดูแล (admin) แล้ว กรุณารอการอนุมัติ</p>
+      <p class="pending-live"><span class="live-dot"></span> ระบบเช็คสถานะอัตโนมัติ — อนุมัติเมื่อไหร่เข้าใช้งานได้ทันที</p>
+      <button class="outline-button full-width" type="button" onclick="App.logout()">ออกจากระบบ</button>
+    </div>
+  </div>
+
+  <!-- ── ตัวแอปหลัก ────────────────────────────────────────────────────────── -->
+  <div id="app" class="app-shell hidden">
+    <header class="topbar">
+      <div class="topbar-left">
+        <p class="eyebrow">ASSET VERIFICATION</p>
+        <h1 id="topTitle">ตรวจนับทรัพย์สิน BRH3</h1>
+      </div>
+      <div class="topbar-actions">
+        <button id="syncChip" class="sync-chip hidden" type="button" onclick="App.flushQueueNow()">⏳ รอส่ง <b id="syncCount">0</b></button>
+        <span id="netChip" class="net-chip online" title="สถานะเครือข่าย">●</span>
+        <button class="top-action" type="button" onclick="App.refreshAll()" title="รีเฟรชข้อมูล">↻</button>
+        <button class="top-action" type="button" onclick="App.logout()" title="ออกจากระบบ">⎋</button>
+      </div>
+    </header>
+    <div class="userbar"><span id="topUser"></span><span id="appVersion" class="version-badge"></span></div>
+
+    <main id="mainArea">
+      <!-- ══ แท็บ 1: ทรัพย์สิน Fixed Assets ══ -->
+      <section id="page-fixed" class="page active">
+        <div class="type-head fixed-head">
+          <h2>🏢 ทรัพย์สิน Fixed Assets</h2>
+          <span id="counterF" class="count-pill">0/0</span>
+        </div>
+        <div class="toolbar">
+          <label class="search-box"><span>⌕</span>
+            <input id="searchF" type="search" placeholder="ค้นหา: รหัส / ชื่อ / Serial / ผู้รับผิดชอบ" oninput="App.setSearch('F', this.value)">
+          </label>
+          <div class="filter-row">
+            <select id="catF" class="filter-select" onchange="App.setCat('F', this.value)"><option value="">ทุกหมวด</option></select>
+            <select id="staffF" class="filter-select" onchange="App.setStaff(this.value)"><option value="">ผู้รับผิดชอบ: ทั้งหมด</option></select>
+            <select id="sortF" class="filter-select" onchange="App.setSort('F', this.value)">
+              <option value="inv">เรียง: รหัสทรัพย์สิน</option>
+              <option value="time">เรียง: ตรวจล่าสุดก่อน</option>
+              <option value="name">เรียง: ชื่อทรัพย์สิน</option>
+            </select>
+          </div>
+          <div id="statusChipsF" class="filter-chips">
+            <button class="chip active" data-status="" onclick="App.setStatus('F','')">ทั้งหมด</button>
+            <button class="chip" data-status="pending" onclick="App.setStatus('F','pending')">ยังไม่ตรวจ</button>
+            <button class="chip" data-status="found" onclick="App.setStatus('F','found')">พบ</button>
+            <button class="chip" data-status="damaged" onclick="App.setStatus('F','damaged')">ชำรุด</button>
+            <button class="chip" data-status="notfound" onclick="App.setStatus('F','notfound')">ไม่พบ</button>
+            <button class="chip" data-status="moved" onclick="App.setStatus('F','moved')">ย้ายออก</button>
+          </div>
+          <div class="tool-buttons">
+            <button class="tool-button" type="button" onclick="App.openBulk('FIXED')">⚡ โหมดตรวจต่อเนื่อง</button>
+            <button class="tool-button" type="button" onclick="App.openUnlisted('')">➕ นอกทะเบียน</button>
+          </div>
+        </div>
+        <div id="listF" class="asset-list"></div>
+      </section>
+
+      <!-- ══ แท็บ 2: ทรัพย์สินของเช่า ══ -->
+      <section id="page-rental" class="page">
+        <div class="type-head rental-head">
+          <h2>🚚 ทรัพย์สินของเช่า</h2>
+          <span id="counterR" class="count-pill">0/0</span>
+        </div>
+        <div class="toolbar">
+          <label class="search-box"><span>⌕</span>
+            <input id="searchR" type="search" placeholder="ค้นหา: รหัส / ชื่อ / Material" oninput="App.setSearch('R', this.value)">
+          </label>
+          <div class="filter-row">
+            <select id="catR" class="filter-select" onchange="App.setCat('R', this.value)"><option value="">ทุกหมวด</option></select>
+            <select id="sortR" class="filter-select" onchange="App.setSort('R', this.value)">
+              <option value="inv">เรียง: รหัสทรัพย์สิน</option>
+              <option value="time">เรียง: ตรวจล่าสุดก่อน</option>
+              <option value="name">เรียง: ชื่อทรัพย์สิน</option>
+            </select>
+          </div>
+          <div id="statusChipsR" class="filter-chips">
+            <button class="chip active" data-status="" onclick="App.setStatus('R','')">ทั้งหมด</button>
+            <button class="chip" data-status="pending" onclick="App.setStatus('R','pending')">ยังไม่ตรวจ</button>
+            <button class="chip" data-status="found" onclick="App.setStatus('R','found')">พบ</button>
+            <button class="chip" data-status="damaged" onclick="App.setStatus('R','damaged')">ชำรุด</button>
+            <button class="chip" data-status="notfound" onclick="App.setStatus('R','notfound')">ไม่พบ</button>
+            <button class="chip" data-status="moved" onclick="App.setStatus('R','moved')">ย้ายออก</button>
+          </div>
+          <div class="tool-buttons">
+            <button class="tool-button" type="button" onclick="App.openBulk('RENTAL')">⚡ โหมดตรวจต่อเนื่อง</button>
+            <button class="tool-button" type="button" onclick="App.openUnlisted('')">➕ นอกทะเบียน</button>
+          </div>
+        </div>
+        <div id="listR" class="asset-list"></div>
+      </section>
+
+      <!-- ══ แท็บ 3: สรุปผล ══ -->
+      <section id="page-dash" class="page">
+        <div class="type-head"><h2>📊 สรุปผลการตรวจ</h2>
+          <button class="tool-button" type="button" onclick="App.exportExcel()">⬇ ดาวน์โหลด Excel</button>
+        </div>
+        <div id="dashContent"></div>
+      </section>
+
+      <!-- ══ แท็บ 4: จัดการ (admin) ══ -->
+      <section id="page-manage" class="page">
+        <div class="type-head"><h2>⚙ จัดการระบบ</h2></div>
+
+        <div class="card">
+          <h3>นำเข้าทะเบียนทรัพย์สิน (Master)</h3>
+          <p class="hint">รองรับไฟล์รายงาน Assets (.xls/.xlsx) ที่มีชีท "ทรัพย์สิน Fixed Assets" และ
+            "ทรัพย์สินของเช่า" — ระบบอ่านหัวตารางจริงอัตโนมัติ การนำเข้าจะ<strong>แทนที่ทะเบียนเดิมทั้งชุด</strong>
+            (ประวัติผลตรวจไม่หาย)</p>
+          <label class="upload-zone">
+            <input id="masterFile" type="file" accept=".xls,.xlsx" hidden onchange="App.importMasterFile(event)">
+            <span class="upload-icon">⇧</span>
+            <span>แตะเพื่อเลือกไฟล์ Assets_BRH3.xls</span>
+          </label>
+          <div id="importPreview" class="import-preview hidden"></div>
+          <div id="importActions" class="import-actions hidden">
+            <button class="outline-button" type="button" onclick="App.cancelImport()">ยกเลิก</button>
+            <button class="primary-button" type="button" onclick="App.confirmImport()">ยืนยันนำเข้า</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>บัญชีผู้ใช้ <span id="pendingBadge" class="req-badge hidden">0</span></h3>
+          <p class="hint">อนุมัติผู้สมัครใหม่ / กำหนดบทบาท — viewer ดูอย่างเดียว · counter บันทึกผลตรวจได้ · admin จัดการระบบ</p>
+          <div id="usersList" class="users-list"></div>
+        </div>
+
+        <div class="card">
+          <h3>ข้อมูลระบบ</h3>
+          <div id="sysInfo" class="sys-info"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ── แถบนำทางล่าง + ปุ่มสแกนกลาง ── -->
+    <nav class="bottom-nav">
+      <button id="nav-fixed" class="nav-btn active" type="button" onclick="App.go('fixed')"><span>🏢</span>Fixed</button>
+      <button id="nav-rental" class="nav-btn" type="button" onclick="App.go('rental')"><span>🚚</span>ของเช่า</button>
+      <button class="scan-fab" type="button" onclick="App.openScanner()" aria-label="สแกน QR"><span>▣</span></button>
+      <button id="nav-dash" class="nav-btn" type="button" onclick="App.go('dash')"><span>📊</span>สรุปผล</button>
+      <button id="nav-manage" class="nav-btn hidden" type="button" onclick="App.go('manage')"><span>⚙</span>จัดการ</button>
+    </nav>
+  </div>
+
+  <!-- ── Modal: สแกน QR ────────────────────────────────────────────────────── -->
+  <div id="scannerModal" class="modal hidden">
+    <div class="scanner-wrap">
+      <div class="scanner-top">
+        <span id="scanStatus" class="scan-status">กำลังเปิดกล้อง...</span>
+        <button class="close-button" type="button" onclick="App.closeScanner()">✕</button>
+      </div>
+      <video id="scanVideo" playsinline muted></video>
+      <div class="scan-frame"></div>
+      <div id="scanNotFound" class="scan-notfound hidden">
+        <p>ไม่พบรหัส <b id="nfCode"></b> ในทะเบียน</p>
+        <div class="scan-nf-actions">
+          <button class="outline-button" type="button" onclick="App.resumeScan()">สแกนต่อ</button>
+          <button class="primary-button" type="button" onclick="App.scanUnlisted()">บันทึกนอกทะเบียน</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Modal: รายละเอียด + บันทึกผลตรวจ ─────────────────────────────────── -->
+  <div id="recordModal" class="modal hidden" onclick="if(event.target===this)App.closeRecord()">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div>
+          <div class="rec-title-row"><h3 id="recTitle" class="mono"></h3><span id="recTypeBadge" class="type-badge"></span></div>
+          <p id="recSub"></p>
+        </div>
+        <button class="close-button" type="button" onclick="App.closeRecord()">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div id="recInfo" class="rec-info"></div>
+        <div id="recWarn" class="rec-warn hidden"></div>
+        <div id="recHistory" class="rec-history"></div>
+
+        <form id="recForm" class="rec-form" onsubmit="event.preventDefault(); App.saveRecord();">
+          <div id="unlistedFields" class="hidden">
+            <label class="field"><span>รหัสทรัพย์สิน (ตามป้ายจริง)</span>
+              <input id="unlInv" type="text" autocapitalize="characters" placeholder="เช่น RT-XXXX-26-0001 หรือรหัสอื่น"></label>
+            <label class="field"><span>คำอธิบายทรัพย์สิน</span>
+              <input id="unlDesc" type="text" placeholder="เช่น เครื่องตัดไฟเบอร์ ไม่มีในทะเบียน"></label>
+          </div>
+
+          <p class="form-label">ผลการตรวจ</p>
+          <div id="resultSeg" class="result-seg">
+            <button type="button" class="seg seg-ok" data-result="FOUND_NORMAL" onclick="App.chooseResult('FOUND_NORMAL')">✅ พบ · ปกติ</button>
+            <button type="button" class="seg seg-dmg" data-result="FOUND_DAMAGED" onclick="App.chooseResult('FOUND_DAMAGED')">🛠 พบ · ชำรุด</button>
+            <button type="button" class="seg seg-no" data-result="NOT_FOUND" onclick="App.chooseResult('NOT_FOUND')">❌ ไม่พบ</button>
+            <button type="button" class="seg seg-mv" data-result="MOVED" onclick="App.chooseResult('MOVED')">🚚 ย้ายออก</button>
+          </div>
+
+          <div id="movedFields" class="moved-fields hidden">
+            <label class="field"><span>ส่งไป SITE</span>
+              <input id="moveSite" type="text" autocapitalize="characters" placeholder="เช่น RBP5"></label>
+            <div class="field-pair">
+              <label class="field"><span>เลขที่ใบส่ง</span><input id="moveDoc" type="text" placeholder="เลขที่เอกสารส่งของ"></label>
+              <label class="field"><span>วันที่ส่ง</span><input id="moveDate" type="date"></label>
+            </div>
+          </div>
+
+          <label class="field"><span>ตำแหน่งที่ตรวจ (อาคาร/ชั้น/ห้อง/โซน)</span>
+            <input id="recLocation" type="text" list="locList" placeholder="เช่น อาคาร A ชั้น 2 ห้องประชุม"></label>
+          <datalist id="locList"></datalist>
+
+          <label class="field"><span>หมายเหตุ</span>
+            <textarea id="recNote" rows="2" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"></textarea></label>
+
+          <p class="form-label">รูปถ่าย</p>
+          <div id="photoStrip" class="photo-strip"></div>
+          <div class="photo-buttons">
+            <label class="tool-button">📷 ถ่ายรูป<input id="photoCam" type="file" accept="image/*" capture="environment" hidden onchange="App.addPhotos(event)"></label>
+            <label class="tool-button">🖼 จากแกลเลอรี<input id="photoGal" type="file" accept="image/*" multiple hidden onchange="App.addPhotos(event)"></label>
+          </div>
+
+          <p id="gpsLine" class="gps-line">📍 กำลังหาพิกัด GPS...</p>
+          <button id="recSave" class="primary-button full-width big-save" type="submit">บันทึกผลตรวจ</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Modal: โหมดตรวจต่อเนื่อง (Bulk) ──────────────────────────────────── -->
+  <div id="bulkModal" class="modal hidden" onclick="if(event.target===this)App.closeBulk()">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div><h3 id="bulkTitle">⚡ โหมดตรวจต่อเนื่อง</h3><p id="bulkSub"></p></div>
+        <button class="close-button" type="button" onclick="App.closeBulk()">✕</button>
+      </div>
+      <div class="sheet-body">
+        <label class="field"><span>หมวดทรัพย์สิน (prefix ค้างไว้)</span>
+          <select id="bulkCat" onchange="App.setBulkCat(this.value)"></select></label>
+        <form class="bulk-entry" onsubmit="event.preventDefault(); App.bulkSubmit();">
+          <span id="bulkPrefix" class="bulk-prefix mono">RT-XXXX-</span>
+          <input id="bulkTail" class="bulk-tail mono" type="text" inputmode="text" autocapitalize="characters"
+            placeholder="26-0001" autocomplete="off">
+          <button class="primary-button" type="submit">บันทึก</button>
+        </form>
+        <p class="hint">กรอกเฉพาะส่วนท้ายของรหัส เช่น <b>26-0001</b> หรือ <b>260001</b> แล้วกดบันทึก —
+          ช่องจะเคลียร์ให้กรอกตัวถัดไปทันที (สแกน QR จากปุ่มกลางจอก็ได้ผลเดียวกัน)</p>
+        <p class="form-label">ผลที่ใช้บันทึก</p>
+        <div id="bulkResultSeg" class="result-seg three">
+          <button type="button" class="seg seg-ok active" data-result="FOUND_NORMAL" onclick="App.setBulkResult('FOUND_NORMAL')">✅ พบ · ปกติ</button>
+          <button type="button" class="seg seg-dmg" data-result="FOUND_DAMAGED" onclick="App.setBulkResult('FOUND_DAMAGED')">🛠 พบ · ชำรุด</button>
+          <button type="button" class="seg seg-no" data-result="NOT_FOUND" onclick="App.setBulkResult('NOT_FOUND')">❌ ไม่พบ</button>
+        </div>
+        <label class="field"><span>ตำแหน่งที่ตรวจ</span>
+          <input id="bulkLocation" type="text" list="locList" placeholder="เช่น คลังเก็บของ โซน B"></label>
+        <div id="bulkCounter" class="bulk-counter"></div>
+        <div id="bulkLast" class="bulk-last"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastContainer" class="toast-container"></div>
+  <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="src/assetStore.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
