@@ -785,6 +785,13 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
   border: 1.5px solid var(--accent); border-radius: var(--r); text-transform: uppercase;
   font-family: 'IBM Plex Mono', monospace; background: var(--surface); color: var(--text);
 }
+.bulk-opts { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.auto-chip {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; cursor: pointer;
+}
+.auto-chip input { width: 17px; height: 17px; accent-color: var(--accent); }
+.bulk-tail { letter-spacing: .08em; text-align: center; }
 .bulk-counter { margin-top: 12px; font-size: 14px; font-weight: 700; color: var(--accent); }
 .bulk-last { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
 

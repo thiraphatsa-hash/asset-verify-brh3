@@ -349,12 +349,20 @@
           <select id="bulkCat" onchange="App.setBulkCat(this.value)"></select></label>
         <form class="bulk-entry" onsubmit="event.preventDefault(); App.bulkSubmit();">
           <span id="bulkPrefix" class="bulk-prefix mono">RT-XXXX-</span>
-          <input id="bulkTail" class="bulk-tail mono" type="text" autocapitalize="characters"
-            placeholder="26-0001" autocomplete="off">
+          <input id="bulkTail" class="bulk-tail mono" type="text"
+            inputmode="numeric" pattern="[0-9-]*" enterkeyhint="done"
+            autocapitalize="characters" autocorrect="off" spellcheck="false"
+            placeholder="26-0001" autocomplete="off" oninput="App.formatBulkTail(this)">
           <button class="primary-button" type="submit">บันทึก</button>
         </form>
-        <p class="hint">กรอกเฉพาะส่วนท้าย เช่น <b>26-0001</b> หรือ <b>260001</b> แล้วกดบันทึก —
-          ช่องจะเคลียร์ให้กรอกตัวถัดไปทันที โดย prefix ยังคงอยู่</p>
+        <div class="bulk-opts">
+          <button type="button" class="chip" onclick="App.insertYY()">ใส่ปี YY</button>
+          <label class="auto-chip"><input type="checkbox" id="bulkAuto"
+            onchange="App.setBulkAuto(this.checked)"> บันทึกเองเมื่อครบ 6 หลัก</label>
+        </div>
+        <p class="hint">พิมพ์เฉพาะตัวเลขส่วนท้าย <b>262222</b> ระบบใส่ขีดให้เอง → <b>26-2222</b>
+          (แป้นพิมพ์บนมือถือเป็นตัวเลขล้วนแบบกดเบอร์โทร) — บันทึกแล้วช่องเคลียร์ให้ทันที prefix ยังอยู่
+          · รหัสที่ปีเป็นตัวอักษร <b>YY</b> ให้กดปุ่ม "ใส่ปี YY"</p>
         <p class="form-label">ผลที่ใช้บันทึก</p>
         <div id="bulkResultSeg" class="result-seg">
           <button type="button" class="seg seg-ok active" data-result="FOUND_NORMAL" onclick="App.setBulkResult('FOUND_NORMAL')"><span data-icon="check"></span> พบ</button>

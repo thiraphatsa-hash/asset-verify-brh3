@@ -97,7 +97,7 @@ const App = (() => {
     accessSeen: {},
     accessTimer: null,
     scan: { active: false, paused: false, stream: null, reader: null, timer: null, lastCode: '' },
-    bulk: { cat: '', resultKey: 'FOUND_NORMAL', count: 0 },
+    bulk: { cat: '', resultKey: 'FOUND_NORMAL', count: 0, auto: true },
     importData: null,
     flushing: false,
     channel: null,
@@ -1702,6 +1702,9 @@ const App = (() => {
     el('bulkCat').value = state.bulk.cat;
     el('bulkLocation').value = cacheGet('avLastLocation') || '';
     el('bulkLast').textContent = '';
+    const auto = cacheGet('avBulkAuto');
+    state.bulk.auto = auto === null ? true : Boolean(auto);
+    el('bulkAuto').checked = state.bulk.auto;
     document.querySelectorAll('#bulkResultSeg .seg').forEach((s) => {
       s.classList.toggle('active', s.dataset.result === state.bulk.resultKey);
     });
@@ -1734,6 +1737,36 @@ const App = (() => {
     });
     el('bulkCounter').textContent = 'ตรวจแล้ว ' + done + ' / ' + list.length +
       ' รายการในหมวดนี้' + (state.bulk.count ? ' · รอบนี้ ' + state.bulk.count + ' รายการ' : '');
+  }
+  /**
+   * จัดรูปแบบช่องกรอกเลขท้ายให้เอง: พิมพ์ 262222 → แสดง 26-2222
+   * (เก็บเฉพาะ A-Z 0-9 สูงสุด 6 ตัว แล้วแทรกขีดหลังตัวที่ 2)
+   */
+  let bulkAutoTimer = null;
+  function formatBulkTail(input) {
+    const raw = String(input.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    input.value = raw.length > 2 ? raw.slice(0, 2) + '-' + raw.slice(2) : raw;
+    clearTimeout(bulkAutoTimer);
+    if (state.bulk.auto && raw.length === 6) {
+      // ครบ 2+4 ตัวแล้วบันทึกให้เอง (แป้นตัวเลขบนมือถือไม่มีปุ่ม Enter)
+      bulkAutoTimer = setTimeout(() => {
+        if (!el('bulkModal').classList.contains('hidden')) bulkSubmit();
+      }, 320);
+    }
+  }
+  /** ใส่ปีเป็น YY (แป้นตัวเลขพิมพ์ตัวอักษรไม่ได้) */
+  function insertYY() {
+    const input = el('bulkTail');
+    const raw = String(input.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    input.value = 'YY' + (raw.length > 2 ? '-' + raw.slice(2, 6) : '-');
+    input.focus();
+    const end = input.value.length;
+    try { input.setSelectionRange(end, end); } catch (e) {}
+  }
+  function setBulkAuto(on) {
+    state.bulk.auto = Boolean(on);
+    cacheSet('avBulkAuto', state.bulk.auto);
+    el('bulkTail').focus();
   }
   function bulkCodeFromTail(raw) {
     let s = String(raw || '').toUpperCase().replace(/[–—]/g, '-').replace(/\s+/g, '');
@@ -2387,6 +2420,7 @@ const App = (() => {
     addPhotos, removePhoto, viewPhoto, deleteLogEntry,
     openScanner, closeScanner, resumeScan, scanUnlisted,
     openBulk, closeBulk, setBulkCat, setBulkResult, bulkSubmit,
+    formatBulkTail, insertYY, setBulkAuto,
     openUnlisted, exportExcel, toggleSection,
     setUserField, clearLocalCache
   };
