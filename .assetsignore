@@ -1,0 +1,12 @@
+# ไฟล์ที่ห้ามอัปขึ้นเว็บสาธารณะ (Cloudflare Workers static assets)
+# ⚠ ถ้าไม่มีไฟล์นี้ โฟลเดอร์ .git จะถูกเสิร์ฟออกเว็บ = ใครก็โหลดซอร์สโค้ดทั้ง repo ได้
+.git
+.git/**
+.gitignore
+.assetsignore
+
+# ไฟล์ประกอบที่ไม่ได้ใช้ตอนรันเว็บ
+docs
+docs/**
+schema.sql
+README.md
