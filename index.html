@@ -13,7 +13,7 @@
 </head>
 <body>
   <div id="appLoader" class="app-loader">
-    <div class="brand-mark"><span>A</span><div><b>ATLAS</b><small>ASSET INSPECTION</small></div></div>
+    <div class="brand-mark"><span data-icon="clipboard"></span><div><b>ATLAS</b><small>ASSET INSPECTION</small></div></div>
     <div class="spinner"></div>
     <p>กำลังเตรียมระบบ...</p>
   </div>
@@ -21,7 +21,7 @@
   <!-- ── เข้าสู่ระบบ / สมัครสมาชิก ─────────────────────────────────────────── -->
   <div id="loginOverlay" class="login-overlay hidden">
     <form class="login-card" onsubmit="event.preventDefault(); App.submitAuth();">
-      <div class="brand-mark"><span>A</span><div><b>ATLAS</b><small>ASSET INSPECTION</small></div></div>
+      <div class="brand-mark"><span data-icon="clipboard"></span><div><b>ATLAS</b><small>ASSET INSPECTION</small></div></div>
       <h2 id="authTitle">เข้าสู่ระบบ</h2>
       <p class="auth-sub">ระบบตรวจนับทรัพย์สิน</p>
       <div class="auth-tabs">
@@ -33,7 +33,7 @@
         <span class="pw-wrap">
           <input id="loginPassword" name="password" type="password" autocomplete="current-password">
           <button id="pwToggle" class="pw-toggle" type="button" onclick="App.togglePassword()"
-            aria-label="แสดง/ซ่อนรหัสผ่าน" title="กดเพื่อดูรหัสผ่านที่พิมพ์">👁</button>
+            aria-label="แสดง/ซ่อนรหัสผ่าน" title="กดเพื่อดูรหัสผ่านที่พิมพ์"><span data-icon="eye"></span></button>
         </span>
       </label>
       <div id="loginError" class="login-error hidden"></div>
@@ -45,7 +45,7 @@
 
   <div id="pendingOverlay" class="login-overlay hidden">
     <div class="login-card">
-      <div class="brand-mark"><span>A</span><div><b>ATLAS</b><small>ASSET INSPECTION</small></div></div>
+      <div class="brand-mark"><span data-icon="clipboard"></span><div><b>ATLAS</b><small>ASSET INSPECTION</small></div></div>
       <h2>บัญชีรออนุมัติ</h2>
       <p class="auth-sub">ส่งคำขอใช้งานถึงผู้ดูแลแล้ว กรุณารอการอนุมัติ</p>
       <p class="pending-live"><span class="live-dot"></span> ระบบเช็คสถานะอัตโนมัติ — อนุมัติเมื่อไหร่เข้าใช้งานได้ทันที</p>
@@ -57,17 +57,17 @@
   <div id="app" class="app-shell hidden">
     <header class="topbar">
       <div class="topbar-left">
-        <button id="backHome" class="icon-button hidden" type="button" onclick="App.go('home')" title="กลับหน้าหลัก">‹</button>
+        <button id="backHome" class="icon-button hidden" type="button" onclick="App.go('home')" title="กลับหน้าหลัก"><span data-icon="back"></span></button>
         <div class="topbar-titles">
           <p id="topKicker" class="kicker">ASSET INSPECTION</p>
           <h1 id="topTitle">ระบบตรวจนับทรัพย์สิน</h1>
         </div>
       </div>
       <div class="topbar-actions">
-        <button id="syncChip" class="sync-chip hidden" type="button" onclick="App.flushQueueNow()">⏳ รอส่ง <b id="syncCount">0</b></button>
+        <button id="syncChip" class="sync-chip hidden" type="button" onclick="App.flushQueueNow()"><span data-icon="clock"></span> รอส่ง <b id="syncCount">0</b></button>
         <span id="netChip" class="net-chip online" title="สถานะเครือข่าย">●</span>
-        <button class="icon-button" type="button" onclick="App.refreshAll()" title="รีเฟรชข้อมูล">↻</button>
-        <button class="icon-button" type="button" onclick="App.logout()" title="ออกจากระบบ">⎋</button>
+        <button class="icon-button" type="button" onclick="App.refreshAll()" title="รีเฟรชข้อมูล"><span data-icon="refresh"></span></button>
+        <button class="icon-button" type="button" onclick="App.logout()" title="ออกจากระบบ"><span data-icon="logout"></span></button>
       </div>
     </header>
     <div class="userbar"><span id="topUser"></span><span id="appVersion" class="version-badge"></span></div>
@@ -80,11 +80,11 @@
             <p class="kicker">ASSET VERIFICATION ROUNDS</p>
             <h2>รอบการตรวจนับทรัพย์สิน</h2>
           </div>
-          <button id="newRoundBtn" class="primary-button" type="button" onclick="App.go('upload')">＋ สร้างรอบตรวจ</button>
+          <button id="newRoundBtn" class="primary-button" type="button" onclick="App.go('upload')"><span data-icon="plus"></span> สร้างรอบตรวจ</button>
         </div>
 
         <div class="toolbar">
-          <label class="search-box"><span>⌕</span>
+          <label class="search-box"><span data-icon="search"></span>
             <input id="homeSearch" type="search" placeholder="ค้นหา: โครงการ / ผู้ตรวจ / วันที่" oninput="App.setHomeSearch(this.value)">
           </label>
           <div class="filter-row">
@@ -118,7 +118,7 @@
             แต่ละรอบเก็บทะเบียนของตัวเอง ไม่กระทบรอบอื่น</p>
           <label class="upload-zone">
             <input id="masterFile" type="file" accept=".xls,.xlsx" hidden onchange="App.readMasterFile(event)">
-            <span class="upload-icon">⇧</span>
+            <span class="upload-icon" data-icon="upload"></span>
             <span id="uploadZoneText">แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน</span>
           </label>
           <div id="importPreview" class="import-preview hidden"></div>
@@ -154,13 +154,13 @@
 
         <div class="type-switch">
           <button id="typeFIXED" class="type-btn active" type="button" onclick="App.setType('FIXED')">
-            🏢 Fixed Assets <b id="tabCountF">0</b></button>
+            <span data-icon="building"></span> Fixed Assets <b id="tabCountF">0</b></button>
           <button id="typeRENTAL" class="type-btn" type="button" onclick="App.setType('RENTAL')">
-            🚚 ของเช่า <b id="tabCountR">0</b></button>
+            <span data-icon="truck"></span> ของเช่า <b id="tabCountR">0</b></button>
         </div>
 
         <div class="toolbar">
-          <label class="search-box"><span>⌕</span>
+          <label class="search-box"><span data-icon="search"></span>
             <input id="search" type="search" placeholder="ค้นหา: รหัส / ชื่อ / Serial / ผู้รับผิดชอบ" oninput="App.setSearch(this.value)">
           </label>
           <div class="filter-row">
@@ -181,15 +181,15 @@
           </div>
           <div class="view-row">
             <div class="view-switch">
-              <button id="viewTable" class="view-btn active" type="button" onclick="App.setView('table')">▤ ตาราง</button>
-              <button id="viewCard" class="view-btn" type="button" onclick="App.setView('card')">▦ การ์ด</button>
+              <button id="viewTable" class="view-btn active" type="button" onclick="App.setView('table')"><span data-icon="table"></span> ตาราง</button>
+              <button id="viewCard" class="view-btn" type="button" onclick="App.setView('card')"><span data-icon="square"></span> การ์ด</button>
             </div>
             <span id="counter" class="count-pill">0/0</span>
           </div>
           <div class="tool-buttons">
-            <button class="tool-button" type="button" onclick="App.openBulk()">⚡ ตรวจต่อเนื่อง</button>
-            <button class="tool-button" type="button" onclick="App.openUnlisted('')">＋ นอกทะเบียน</button>
-            <button class="tool-button" type="button" onclick="App.exportExcel()">⬇ Excel</button>
+            <button class="tool-button" type="button" onclick="App.openBulk()"><span data-icon="bolt"></span> ตรวจต่อเนื่อง</button>
+            <button class="tool-button" type="button" onclick="App.openUnlisted('')"><span data-icon="plus"></span> นอกทะเบียน</button>
+            <button class="tool-button" type="button" onclick="App.exportExcel()"><span data-icon="download"></span> Excel</button>
           </div>
         </div>
 
@@ -209,7 +209,7 @@
             <p class="kicker">DASHBOARD</p>
             <h2 id="dashTitle">สรุปผลการตรวจ</h2>
           </div>
-          <button class="outline-button" type="button" onclick="App.exportExcel()">⬇ ดาวน์โหลด Excel</button>
+          <button class="outline-button" type="button" onclick="App.exportExcel()"><span data-icon="download"></span> ดาวน์โหลด Excel</button>
         </div>
         <div id="dashContent"></div>
       </section>
@@ -243,19 +243,19 @@
         <button class="link-button" type="button" onclick="App.clearSelection()">ล้าง</button></div>
       <input id="bulkBarLocation" type="text" list="locList" placeholder="ตำแหน่งที่ตรวจ (ไม่บังคับ)">
       <div class="bulk-bar-actions">
-        <button class="seg seg-ok" type="button" onclick="App.applySelection('FOUND_NORMAL')">✅ พบ</button>
-        <button class="seg seg-no" type="button" onclick="App.applySelection('NOT_FOUND')">❌ ไม่พบ</button>
-        <button id="bulkDelete" class="seg seg-del hidden" type="button" onclick="App.deleteSelectedHistory()">🗑 ลบประวัติ</button>
+        <button class="seg seg-ok" type="button" onclick="App.applySelection('FOUND_NORMAL')"><span data-icon="check"></span> พบ</button>
+        <button class="seg seg-no" type="button" onclick="App.applySelection('NOT_FOUND')"><span data-icon="close"></span> ไม่พบ</button>
+        <button id="bulkDelete" class="seg seg-del hidden" type="button" onclick="App.deleteSelectedHistory()"><span data-icon="trash"></span> ลบประวัติ</button>
       </div>
     </div>
 
     <!-- แถบนำทางล่าง -->
     <nav class="bottom-nav">
-      <button id="nav-home" class="nav-btn active" type="button" onclick="App.go('home')"><span>🏠</span>หน้าหลัก</button>
-      <button id="nav-list" class="nav-btn" type="button" onclick="App.go('list')"><span>▤</span>รายการ</button>
-      <button class="scan-fab" type="button" onclick="App.openScanner()" aria-label="สแกน QR"><span>▣</span></button>
-      <button id="nav-dash" class="nav-btn" type="button" onclick="App.go('dash')"><span>📊</span>สรุปผล</button>
-      <button id="nav-manage" class="nav-btn hidden" type="button" onclick="App.go('manage')"><span>⚙</span>จัดการ<span id="navReqBadge" class="nav-badge hidden">0</span></button>
+      <button id="nav-home" class="nav-btn active" type="button" onclick="App.go('home')"><span data-icon="home"></span>หน้าหลัก</button>
+      <button id="nav-list" class="nav-btn" type="button" onclick="App.go('list')"><span data-icon="table"></span>รายการ</button>
+      <button class="scan-fab" type="button" onclick="App.openScanner()" aria-label="สแกน QR"><span data-icon="scan"></span></button>
+      <button id="nav-dash" class="nav-btn" type="button" onclick="App.go('dash')"><span data-icon="chart"></span>สรุปผล</button>
+      <button id="nav-manage" class="nav-btn hidden" type="button" onclick="App.go('manage')"><span data-icon="settings"></span>จัดการ<span id="navReqBadge" class="nav-badge hidden">0</span></button>
     </nav>
   </div>
 
@@ -264,7 +264,7 @@
     <div class="scanner-wrap">
       <div class="scanner-top">
         <span id="scanStatus" class="scan-status">กำลังเปิดกล้อง...</span>
-        <button class="close-button" type="button" onclick="App.closeScanner()">✕</button>
+        <button class="close-button" type="button" onclick="App.closeScanner()"><span data-icon="close"></span></button>
       </div>
       <video id="scanVideo" playsinline muted></video>
       <div class="scan-frame"></div>
@@ -286,7 +286,7 @@
           <div class="rec-title-row"><h3 id="recTitle" class="mono"></h3><span id="recTypeBadge" class="type-badge"></span></div>
           <p id="recSub"></p>
         </div>
-        <button class="close-button" type="button" onclick="App.closeRecord()">✕</button>
+        <button class="close-button" type="button" onclick="App.closeRecord()"><span data-icon="close"></span></button>
       </div>
       <div class="sheet-body">
         <div id="recInfo" class="rec-info"></div>
@@ -303,9 +303,9 @@
 
           <p class="form-label">ผลการตรวจ</p>
           <div id="resultSeg" class="result-seg three">
-            <button type="button" class="seg seg-ok" data-result="FOUND_NORMAL" onclick="App.chooseResult('FOUND_NORMAL')">✅ พบ</button>
-            <button type="button" class="seg seg-no" data-result="NOT_FOUND" onclick="App.chooseResult('NOT_FOUND')">❌ ไม่พบ</button>
-            <button type="button" class="seg seg-mv" data-result="MOVED" onclick="App.chooseResult('MOVED')">🚚 ย้ายออก</button>
+            <button type="button" class="seg seg-ok" data-result="FOUND_NORMAL" onclick="App.chooseResult('FOUND_NORMAL')"><span data-icon="check"></span> พบ</button>
+            <button type="button" class="seg seg-no" data-result="NOT_FOUND" onclick="App.chooseResult('NOT_FOUND')"><span data-icon="close"></span> ไม่พบ</button>
+            <button type="button" class="seg seg-mv" data-result="MOVED" onclick="App.chooseResult('MOVED')"><span data-icon="truck"></span> ย้ายออก</button>
           </div>
 
           <div id="movedFields" class="moved-fields hidden">
@@ -326,11 +326,11 @@
           <p class="form-label">รูปถ่าย</p>
           <div id="photoStrip" class="photo-strip"></div>
           <div class="photo-buttons">
-            <label class="tool-button">📷 ถ่ายรูป<input id="photoCam" type="file" accept="image/*" capture="environment" hidden onchange="App.addPhotos(event)"></label>
-            <label class="tool-button">🖼 จากแกลเลอรี<input id="photoGal" type="file" accept="image/*" multiple hidden onchange="App.addPhotos(event)"></label>
+            <label class="tool-button"><span data-icon="camera"></span> ถ่ายรูป<input id="photoCam" type="file" accept="image/*" capture="environment" hidden onchange="App.addPhotos(event)"></label>
+            <label class="tool-button"><span data-icon="image"></span> จากแกลเลอรี<input id="photoGal" type="file" accept="image/*" multiple hidden onchange="App.addPhotos(event)"></label>
           </div>
 
-          <p id="gpsLine" class="gps-line">📍 กำลังหาพิกัด GPS...</p>
+          <p id="gpsLine" class="gps-line"><span data-icon="pin"></span> กำลังหาพิกัด GPS...</p>
           <button id="recSave" class="primary-button full-width big-save" type="submit">บันทึกผลตรวจ</button>
         </form>
       </div>
@@ -341,8 +341,8 @@
   <div id="bulkModal" class="modal hidden" onclick="if(event.target===this)App.closeBulk()">
     <div class="sheet">
       <div class="sheet-head">
-        <div><h3>⚡ โหมดตรวจต่อเนื่อง</h3><p id="bulkSub"></p></div>
-        <button class="close-button" type="button" onclick="App.closeBulk()">✕</button>
+        <div><h3><span data-icon="bolt"></span> โหมดตรวจต่อเนื่อง</h3><p id="bulkSub"></p></div>
+        <button class="close-button" type="button" onclick="App.closeBulk()"><span data-icon="close"></span></button>
       </div>
       <div class="sheet-body">
         <label class="field"><span>หมวดทรัพย์สิน (prefix ค้างไว้)</span>
@@ -357,8 +357,8 @@
           ช่องจะเคลียร์ให้กรอกตัวถัดไปทันที โดย prefix ยังคงอยู่</p>
         <p class="form-label">ผลที่ใช้บันทึก</p>
         <div id="bulkResultSeg" class="result-seg">
-          <button type="button" class="seg seg-ok active" data-result="FOUND_NORMAL" onclick="App.setBulkResult('FOUND_NORMAL')">✅ พบ</button>
-          <button type="button" class="seg seg-no" data-result="NOT_FOUND" onclick="App.setBulkResult('NOT_FOUND')">❌ ไม่พบ</button>
+          <button type="button" class="seg seg-ok active" data-result="FOUND_NORMAL" onclick="App.setBulkResult('FOUND_NORMAL')"><span data-icon="check"></span> พบ</button>
+          <button type="button" class="seg seg-no" data-result="NOT_FOUND" onclick="App.setBulkResult('NOT_FOUND')"><span data-icon="close"></span> ไม่พบ</button>
         </div>
         <label class="field"><span>ตำแหน่งที่ตรวจ</span>
           <input id="bulkLocation" type="text" list="locList" placeholder="เช่น คลังเก็บของ โซน B"></label>
@@ -372,8 +372,8 @@
   <div id="accessReqModal" class="modal hidden" onclick="if(event.target===this)App.closeAccessReq()">
     <div class="sheet">
       <div class="sheet-head">
-        <div><h3>🔔 มีคำขอใช้งานใหม่</h3><p id="accessReqSub"></p></div>
-        <button class="close-button" type="button" onclick="App.closeAccessReq()">✕</button>
+        <div><h3><span data-icon="bell"></span> มีคำขอใช้งานใหม่</h3><p id="accessReqSub"></p></div>
+        <button class="close-button" type="button" onclick="App.closeAccessReq()"><span data-icon="close"></span></button>
       </div>
       <div class="sheet-body">
         <p class="hint">อนุมัติแล้วผู้ใช้จะเข้าระบบได้ทันทีในบทบาท <b>counter</b> (บันทึกผลตรวจได้)

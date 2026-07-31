@@ -17,6 +17,57 @@ const App = (() => {
     NOT_FOUND:    { result: 'NOT_FOUND', condition: null,     label: 'ไม่พบ',   cls: 'notfound' },
     MOVED:        { result: 'MOVED',     condition: null,     label: 'ย้ายออก', cls: 'moved' }
   };
+  // ── ชุดไอคอน flat modern (วาดด้วย SVG ในไฟล์ ไม่พึ่ง CDN) ───────────────────
+  const ICONS = {
+    home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-6h5v6"/>',
+    table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 15h18M9 9.5V20"/>',
+    scan: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M4 12h16"/>',
+    chart: '<path d="M3 20h18"/><path d="M6.5 20v-6M11.5 20V6M16.5 20v-9M21 20v-4"/>',
+    settings: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="17" r="2"/>',
+    refresh: '<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/>',
+    logout: '<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="m15 8 4 4-4 4M19 12H9"/>',
+    back: '<path d="M14 6l-6 6 6 6"/>',
+    search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    bolt: '<path d="M13 3 5 13h6l-1 8 8-10h-6z"/>',
+    download: '<path d="M12 4v11M8 11l4 4 4-4"/><path d="M5 19h14"/>',
+    upload: '<path d="M12 20V9M8 12l4-4 4 4"/><path d="M5 4h14"/>',
+    trash: '<path d="M4 6h16M9 6V4h6v2M6 6l1 14h10l1-14"/><path d="M10 10v7M14 10v7"/>',
+    camera: '<path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.4"/>',
+    image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.7"/><path d="m5 17 4.5-4.5 3 3L16 12l3 3.5"/>',
+    check: '<path d="m4.5 12.5 5 5 10-11"/>',
+    close: '<path d="m6 6 12 12M18 6 6 18"/>',
+    truck: '<path d="M3 6.5h11v10H3z"/><path d="M14 9.5h4l3 3v4h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="17.5" cy="18" r="2"/>',
+    user: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+    pin: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/>',
+    calendar: '<rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    box: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>',
+    bell: '<path d="M18 15V10a6 6 0 1 0-12 0v5l-2 3h16z"/><path d="M10 21h4"/>',
+    more: '<circle cx="5.5" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.5" fill="currentColor" stroke="none"/>',
+    eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+    eyeOff: '<path d="m4 4 16 16"/><path d="M9.9 5.9A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3.3 4M6.6 8A16.4 16.4 0 0 0 2.5 12S6 18.5 12 18.5c1.2 0 2.3-.2 3.3-.6"/>',
+    building: '<path d="M4 21V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v17"/><path d="M14 8h5a1 1 0 0 1 1 1v12"/><path d="M2.5 21h19"/><path d="M7 7h4M7 11h4M7 15h4M17 12h.01M17 16h.01"/>',
+    note: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8.5 13h7M8.5 17h4"/>',
+    clipboard: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="m8.5 13 2.5 2.5 4.5-5"/>',
+    square: '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/>',
+    alert: '<path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/>'
+  };
+  function icon(name, cls) {
+    const body = ICONS[name];
+    if (!body) return '';
+    return '<svg class="ic' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+      'aria-hidden="true">' + body + '</svg>';
+  }
+  /** เติมไอคอนให้ทุก element ที่มี data-icon ใน HTML คงที่ */
+  function hydrateIcons(root) {
+    (root || document).querySelectorAll('[data-icon]').forEach((n) => {
+      if (n.getAttribute('data-icon-done')) return;
+      n.innerHTML = icon(n.getAttribute('data-icon'));
+      n.setAttribute('data-icon-done', '1');
+    });
+  }
   const THEMES = [
     { key: 'porcelain', label: 'Porcelain — ขาวสะอาด น้ำเงินกรมท่า' },
     { key: 'graphite',  label: 'Graphite — พื้นเข้ม ทอง' },
@@ -315,7 +366,7 @@ const App = (() => {
     const btn = el('pwToggle');
     const show = input.type === 'password';
     input.type = show ? 'text' : 'password';
-    btn.textContent = show ? '🙈' : '👁';
+    btn.innerHTML = icon(show ? 'eyeOff' : 'eye');
     btn.classList.toggle('on', show);
     input.focus();
   }
@@ -577,9 +628,9 @@ const App = (() => {
           '<span class="pill ' + (done ? 'pill-ok' : 'pill-warn') + '">' +
           (done ? 'เสร็จสิ้น' : 'กำลังตรวจ') + '</span>' +
         '</div>' +
-        '<p class="sc-meta">📅 ' + esc(dates) + ' · 📦 ' + st.total + ' รายการ' +
+        '<p class="sc-meta">' + icon('calendar') + ' ' + esc(dates) + ' <span class="dot-sep">·</span> ' + icon('box') + ' ' + st.total + ' รายการ' +
           ' (Fixed ' + (s.fixedCount || 0) + ' · เช่า ' + (s.rentalCount || 0) + ')' +
-          (s.inspectorName ? ' · 👤 ' + esc(s.inspectorName) : '') + '</p>' +
+          (s.inspectorName ? ' <span class="dot-sep">·</span> ' + icon('user') + ' ' + esc(s.inspectorName) : '') + '</p>' +
         '<div class="progress-line"><span>ตรวจแล้ว ' + st.done + ' / ' + st.total +
           '</span><span>' + st.pct + '%</span></div>' +
         '<div class="bar"><i class="' + (done ? 'ok' : '') + '" style="width:' + st.pct + '%"></i></div>' +
@@ -592,7 +643,7 @@ const App = (() => {
         '<div class="sc-actions">' +
           '<button class="primary-button" type="button" data-act="open">เปิดตรวจนับ</button>' +
           '<button class="outline-button" type="button" data-act="dash">Dashboard</button>' +
-          (state.canWrite ? '<button class="danger-ghost" type="button" data-act="del" title="ลบรอบนี้">🗑</button>' : '') +
+          (state.canWrite ? '<button class="danger-ghost" type="button" data-act="del" title="ลบรอบนี้">' + icon('trash') + '</button>' : '') +
         '</div>' +
       '</article>';
     }).join('');
@@ -750,7 +801,7 @@ const App = (() => {
       if (!site) site = (CFG.SITE || '').toUpperCase();
 
       state.importData = { rows: rows, fileName: file.name, fixed: fixed, rental: rental };
-      el('uploadZoneText').textContent = '📄 ' + file.name;
+      el('uploadZoneText').innerHTML = icon('note') + ' ' + esc(file.name);
       el('importPreview').innerHTML =
         'อ่านไฟล์สำเร็จ — <b>' + rows.length + '</b> รายการ ' +
         '(Fixed Assets <b>' + fixed + '</b> · ของเช่า <b>' + rental + '</b>)' +
@@ -969,12 +1020,12 @@ const App = (() => {
             '<th rowspan="2" class="c-lg">Asset Class</th>' +
             '<th rowspan="2" class="c-lg">Asset Number</th>' +
             '<th rowspan="2" class="c-xl">Sub Numb</th>' +
-            '<th rowspan="2">Inventory Number</th>' +
-            '<th rowspan="2">Description</th>' +
+            '<th rowspan="2" class="th-inv">Inventory Number</th>' +
+            '<th rowspan="2" class="th-desc">Description</th>' +
             '<th rowspan="2" class="c-xl">Serial Number</th>' +
             '<th rowspan="2" class="c-md">Staff – Text</th>' +
             '<th rowspan="2" class="c-xl">Current Site</th>' +
-            '<th colspan="2" class="col-yn">ผลการตรวจเช็ค</th>' +
+            '<th colspan="2" class="yn-group">ผลการตรวจเช็ค</th>' +
             '<th colspan="3" class="c-lg">ย้ายออก</th>' +
             '<th rowspan="2" class="c-lg">หมายเหตุ</th>' +
             '<th rowspan="2" class="col-more"></th>' +
@@ -985,11 +1036,11 @@ const App = (() => {
         : '<tr>' + chk +
             '<th rowspan="2" class="c-lg">NO.</th>' +
             '<th rowspan="2" class="c-md">Material</th>' +
-            '<th rowspan="2">Description</th>' +
-            '<th rowspan="2">Inventory Number</th>' +
+            '<th rowspan="2" class="th-desc">Description</th>' +
+            '<th rowspan="2" class="th-inv">Inventory Number</th>' +
             '<th rowspan="2" class="c-xl">Plan</th>' +
             '<th rowspan="2" class="c-xl">Sloc</th>' +
-            '<th colspan="2" class="col-yn">ผลการตรวจเช็ค</th>' +
+            '<th colspan="2" class="yn-group">ผลการตรวจเช็ค</th>' +
             '<th colspan="3" class="c-lg">ย้ายออก</th>' +
             '<th rowspan="2" class="c-lg">หมายเหตุ</th>' +
             '<th rowspan="2" class="col-more"></th>' +
@@ -1038,7 +1089,7 @@ const App = (() => {
           cell(mv ? mv.moveDocNo : '', 'c-lg') +
           cell(mv && mv.moveDate ? thaiD(mv.moveDate) : '', 'c-lg') +
           cell(latest ? latest.note : '', 'c-lg note-cell') +
-          '<td class="col-more"><button class="qbtn more" data-act="open" title="รายละเอียด / ย้ายออก / รูปถ่าย">⋯</button></td>' +
+          '<td class="col-more"><button class="qbtn more" data-act="open" title="รายละเอียด / ย้ายออก / รูปถ่าย">' + icon('more') + '</button></td>' +
           '</tr>';
       }).join('') || '<tr><td colspan="16"><p class="empty-note">ไม่พบรายการตามเงื่อนไข</p></td></tr>';
     } else {
@@ -1047,7 +1098,7 @@ const App = (() => {
         const cls = classify(latest);
         const meta = [];
         if (isFixed) {
-          if (a.staffText) meta.push('👤 ' + esc(a.staffText));
+          if (a.staffText) meta.push(icon('user') + ' ' + esc(a.staffText));
           if (a.serialNumber) meta.push('S/N ' + esc(a.serialNumber));
         } else {
           if (a.materialCode) meta.push('MAT ' + esc(a.materialCode));
@@ -1058,9 +1109,9 @@ const App = (() => {
           statusCell(latest) + '</div>' +
           '<div class="asset-desc">' + esc(a.description || '') + '</div>' +
           (meta.length ? '<div class="asset-meta">' + meta.join(' · ') + '</div>' : '') +
-          (latest ? '<div class="asset-meta">🕓 ' + esc(thaiDT(latest.verifiedAt)) + ' · ' +
+          (latest ? '<div class="asset-meta">' + icon('clock') + ' ' + esc(thaiDT(latest.verifiedAt)) + ' · ' +
             esc(latest.inspector || '') + ' · ' + latest.method +
-            (latest.locationText ? ' · 📌 ' + esc(latest.locationText) : '') +
+            (latest.locationText ? ' · ' + icon('pin') + ' ' + esc(latest.locationText) : '') +
             (latest.pending ? ' · <b class="pending-sync">รอส่ง</b>' : '') + '</div>' : '') +
           '</div>';
       }).join('') || '<p class="empty-note">ไม่พบรายการตามเงื่อนไข</p>';
@@ -1276,17 +1327,17 @@ const App = (() => {
         '<span class="pill st-' + cls + '">' + esc(statusLabel(l)) + '</span>' +
         '<span class="mbadge m-' + (l.method === 'SCAN' ? 'scan' : 'manual') + '">' + l.method + '</span>' +
         '<span>' + esc(thaiDT(l.verifiedAt)) + '</span>' +
-        '<span>👤 ' + esc(l.inspector || '') + '</span>' +
-        (l.locationText ? '<span>📌 ' + esc(l.locationText) + '</span>' : '') +
+        '<span>' + icon('user') + ' ' + esc(l.inspector || '') + '</span>' +
+        (l.locationText ? '<span>' + icon('pin') + ' ' + esc(l.locationText) + '</span>' : '') +
         (l.moveDocNo ? '<span>ใบส่ง ' + esc(l.moveDocNo) + '</span>' : '') +
         (l.moveDate ? '<span>ส่งวันที่ ' + esc(thaiD(l.moveDate)) + '</span>' : '') +
-        (l.note ? '<span>📝 ' + esc(l.note) + '</span>' : '') +
+        (l.note ? '<span>' + icon('note') + ' ' + esc(l.note) + '</span>' : '') +
         photos.map((p, i) =>
-          '<a href="#" class="photo-link" data-path="' + esc(p) + '">📷 รูป ' + (i + 1) + '</a>').join('') +
-        (l.pending ? '<span class="pending-sync">⏳ รอส่ง' +
+          '<a href="#" class="photo-link" data-path="' + esc(p) + '">' + icon('camera') + ' รูป ' + (i + 1) + '</a>').join('') +
+        (l.pending ? '<span class="pending-sync">' + icon('clock') + ' รอส่ง' +
           (l.photoCount ? ' (' + l.photoCount + ' รูป)' : '') + '</span>' : '') +
         (isAdmin && !l.pending
-          ? '<button type="button" class="hist-del" data-log="' + esc(l.logId) + '" title="ลบรายการนี้">🗑</button>'
+          ? '<button type="button" class="hist-del" data-log="' + esc(l.logId) + '" title="ลบรายการนี้">' + icon('trash') + '</button>'
           : '') +
         '</div>';
     });
@@ -1319,7 +1370,7 @@ const App = (() => {
     const latest = state.latest.get(asset.inventoryNumber);
     el('recWarn').classList.toggle('hidden', !latest);
     if (latest) {
-      el('recWarn').innerHTML = '⚠ ตรวจแล้วโดย <b>' + esc(latest.inspector || '-') + '</b> เมื่อ ' +
+      el('recWarn').innerHTML = icon('alert') + ' ตรวจแล้วโดย <b>' + esc(latest.inspector || '-') + '</b> เมื่อ ' +
         esc(thaiDT(latest.verifiedAt)) + ' (ผล: ' + esc(statusLabel(latest)) +
         ') — บันทึกซ้ำจะเพิ่มเป็นรายการใหม่ต่อท้าย ไม่ทับของเดิม';
     }
@@ -1363,7 +1414,7 @@ const App = (() => {
     el('recLocation').value = cacheGet('avLastLocation') || '';
     el('recNote').value = '';
     el('photoStrip').innerHTML = '';
-    el('gpsLine').textContent = '📍 กำลังหาพิกัด GPS...';
+    el('gpsLine').innerHTML = icon('pin') + ' กำลังหาพิกัด GPS...';
     el('gpsLine').className = 'gps-line';
   }
   function chooseResult(key) {
@@ -1377,7 +1428,7 @@ const App = (() => {
   function startGps() {
     if (!state.rec) return;
     if (!navigator.geolocation) {
-      el('gpsLine').textContent = '📍 เครื่องนี้ไม่รองรับ GPS (ข้ามได้ ไม่บังคับ)';
+      el('gpsLine').innerHTML = icon('pin') + ' เครื่องนี้ไม่รองรับ GPS (ข้ามได้ ไม่บังคับ)';
       return;
     }
     const rec = state.rec;
@@ -1387,11 +1438,11 @@ const App = (() => {
         lat: pos.coords.latitude, lng: pos.coords.longitude,
         acc: Math.round(pos.coords.accuracy || 0)
       };
-      el('gpsLine').textContent = '📍 ได้พิกัดแล้ว (±' + rec.gps.acc + ' ม.)';
+      el('gpsLine').innerHTML = icon('pin') + ' ได้พิกัดแล้ว (±' + rec.gps.acc + ' ม.)';
       el('gpsLine').className = 'gps-line ok';
     }, () => {
       if (state.rec !== rec) return;
-      el('gpsLine').textContent = '📍 ไม่ได้พิกัด GPS (ข้ามได้ ไม่บังคับ)';
+      el('gpsLine').innerHTML = icon('pin') + ' ไม่ได้พิกัด GPS (ข้ามได้ ไม่บังคับ)';
     }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 120000 });
   }
   function resizeImage(file, maxDimension, quality) {
@@ -1446,7 +1497,8 @@ const App = (() => {
     if (!state.rec) return;
     el('photoStrip').innerHTML = state.rec.photos.map((p, i) =>
       '<div class="photo-thumb"><img src="' + p.dataUrl + '" alt="">' +
-      '<button type="button" onclick="App.removePhoto(' + i + ')">✕</button></div>').join('');
+      '<button type="button" onclick="App.removePhoto(' + i + ')">' + icon('close') +
+      '</button></div>').join('');
   }
   function removePhoto(i) {
     if (!state.rec) return;
@@ -1721,7 +1773,7 @@ const App = (() => {
     state.bulk.count++;
     afterDataChange();
     updateBulkView();
-    el('bulkLast').textContent = '✔ ล่าสุด: ' + code + ' (' + RESULTS[state.bulk.resultKey].label +
+    el('bulkLast').innerHTML = icon('check') + ' ล่าสุด: ' + esc(code) + ' (' + RESULTS[state.bulk.resultKey].label +
       ') ' + thaiDT(new Date().toISOString());
     beep();
     tailEl.value = '';
@@ -1858,7 +1910,7 @@ const App = (() => {
     });
     const inspectorRows = Object.keys(byInspector)
       .sort((a, b) => byInspector[b] - byInspector[a])
-      .map((k) => '<div class="dash-list-item"><span>👤 ' + esc(k) + '</span><b>' +
+      .map((k) => '<div class="dash-list-item"><span>' + icon('user') + ' ' + esc(k) + '</span><b>' +
         byInspector[k] + ' ครั้ง</b></div>');
     const pendingRow = (a) => '<div class="dash-list-item" data-inv="' + esc(a.inventoryNumber) +
       '"><span class="mono">' + esc(a.inventoryNumber) + '</span><span>' +
@@ -1933,11 +1985,11 @@ const App = (() => {
           '<th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>ผล</th><th class="c-md">ผู้ตรวจ</th>' +
           '<th class="c-md">เวลา</th></tr></thead><tbody>' + recent + '</tbody></table></div>'
           : '<p class="hint">ยังไม่มีการตรวจในรอบนี้</p>') + '</div>' +
-      dashList('pf', '⬜ ยังไม่ตรวจ — Fixed Assets', pendF.map(pendingRow)) +
-      dashList('pr', '⬜ ยังไม่ตรวจ — ของเช่า', pendR.map(pendingRow)) +
-      dashList('nf', '❌ ไม่พบ', notFound) +
-      dashList('mv', '🚚 ย้ายออกไปไซต์อื่น', moved) +
-      dashList('un', '＋ ทรัพย์สินนอกทะเบียน', unl);
+      dashList('pf', icon('square') + ' ยังไม่ตรวจ — Fixed Assets', pendF.map(pendingRow)) +
+      dashList('pr', icon('square') + ' ยังไม่ตรวจ — ของเช่า', pendR.map(pendingRow)) +
+      dashList('nf', icon('close') + ' ไม่พบ', notFound) +
+      dashList('mv', icon('truck') + ' ย้ายออกไปไซต์อื่น', moved) +
+      dashList('un', icon('plus') + ' ทรัพย์สินนอกทะเบียน', unl);
   }
   function toggleSection(id) {
     const b = el('coll-' + id);
@@ -2026,7 +2078,7 @@ const App = (() => {
           site: l && c === 'moved' ? (l.moveToSite || '') : '',
           doc: l && c === 'moved' ? (l.moveDocNo || '') : '',
           date: l && c === 'moved' && l.moveDate ? thaiD(l.moveDate) : '',
-          note: l ? [l.note || '', l.locationText ? '📌 ' + l.locationText : '',
+          note: l ? [l.note || '', l.locationText ? 'ตำแหน่ง ' + l.locationText : '',
             l.inspector ? '(' + l.inspector + ' ' + thaiDT(l.verifiedAt) + ')' : '']
             .filter(Boolean).join(' ') : ''
         };
@@ -2151,9 +2203,9 @@ const App = (() => {
       '<div class="user-row pending-user">' +
       '<div class="user-main"><b>' + esc(u.fullName || u.email || '') + '</b>' +
       '<small>' + esc(u.email || '') + ' · สมัครเมื่อ ' + esc(thaiDT(u.createdAt)) + '</small></div>' +
-      '<button class="primary-button" type="button" onclick="App.approveAccess(\'' + u.id + '\')">✓ อนุมัติ</button>' +
+      '<button class="primary-button" type="button" onclick="App.approveAccess(\'' + u.id + '\')">' + icon('check') + ' อนุมัติ</button>' +
       '<button class="danger-ghost" type="button" onclick="App.rejectAccess(\'' + u.id + '\',\'' +
-        esc(u.email || '') + '\')">✕ ปฏิเสธ</button>' +
+        esc(u.email || '') + '\')">' + icon('close') + ' ปฏิเสธ</button>' +
       '</div>').join('');
     el('accessReqModal').classList.remove('hidden');
   }
@@ -2198,7 +2250,7 @@ const App = (() => {
       const self = u.id === me;
       return '<div class="user-row' + (!u.active ? ' pending-user' : '') + '">' +
         '<div class="user-main"><b>' + esc(u.fullName || u.email || '') + '</b>' +
-        '<small>' + esc(u.email || '') + (u.active ? '' : ' · ⏳ รออนุมัติ') + '</small></div>' +
+        '<small>' + esc(u.email || '') + (u.active ? '' : ' · รออนุมัติ') + '</small></div>' +
         '<input type="text" placeholder="ชื่อที่แสดง" value="' + esc(u.fullName || '') +
         '" onchange="App.setUserField(\'' + u.id + '\',\'fullName\',this.value)">' +
         '<select ' + (self ? 'disabled' : '') +
@@ -2210,7 +2262,8 @@ const App = (() => {
         (self ? ' disabled' : '') +
         ' onchange="App.setUserField(\'' + u.id + '\',\'active\',this.checked)">ใช้งาน</label>' +
         (self ? '' : '<button class="danger-ghost" type="button" title="ลบบัญชีถาวร" ' +
-          'onclick="App.deleteProfileAccount(\'' + u.id + '\',\'' + esc(u.email || '') + '\')">🗑</button>') +
+          'onclick="App.deleteProfileAccount(\'' + u.id + '\',\'' + esc(u.email || '') +
+          '\')">' + icon('trash') + '</button>') +
         '</div>';
     }).join('') || '<p class="hint">ยังไม่มีบัญชี</p>';
   }
@@ -2315,6 +2368,7 @@ const App = (() => {
       if (state.profile && navigator.onLine && !document.hidden) refreshAll(true);
     }, 120000);
     applyTheme(cacheGet('avTheme') || 'porcelain');
+    hydrateIcons();
     const savedView = cacheGet('avView');
     if (savedView === 'card' || savedView === 'table') setView(savedView);
     boot();

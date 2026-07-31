@@ -139,6 +139,24 @@
 :root[data-theme="organic"] .field input,
 :root[data-theme="organic"] .filter-select,
 :root[data-theme="organic"] .search-box { border-radius: 999px; }
+/* ── ไอคอน flat modern (SVG เส้น 2px วาดในไฟล์ ไม่พึ่ง CDN) ─────────────── */
+.ic {
+  width: 1.15em; height: 1.15em; flex: none;
+  vertical-align: -.2em; stroke-width: 2;
+}
+.ic-lg { width: 1.5em; height: 1.5em; }
+[data-icon] { display: inline-flex; align-items: center; justify-content: center; }
+.nav-btn [data-icon] .ic { width: 22px; height: 22px; }
+.icon-button [data-icon] .ic, .close-button [data-icon] .ic { width: 19px; height: 19px; }
+.scan-fab [data-icon] .ic { width: 26px; height: 26px; stroke-width: 2.2; }
+.upload-zone .upload-icon .ic { width: 26px; height: 26px; }
+.brand-mark > span .ic { width: 20px; height: 20px; }
+.tool-button .ic, .primary-button .ic, .outline-button .ic, .seg .ic, .type-btn .ic,
+.view-btn .ic { margin-right: 2px; }
+.sc-meta .ic, .asset-meta .ic, .hist-row .ic, .dash-list-item .ic, .gps-line .ic,
+.row-meta .ic { opacity: .75; }
+.dot-sep { opacity: .45; margin: 0 2px; }
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
@@ -424,6 +442,30 @@ tr.row-selected .col-quick { background: #EEF2F8; }
 th.col-yn { background: var(--surface-2); z-index: 2; }
 th.yn-yes { color: var(--ok); }
 th.yn-no { color: var(--no); }
+/* หัวกลุ่ม "ผลการตรวจเช็ค" ต้องปักขอบขวาเป็นกลุ่มเดียวกับ Yes/No ไม่งั้นลอยทับคอลัมน์อื่น */
+th.yn-group {
+  position: sticky; right: 0; width: 92px; text-align: center;
+  background: var(--surface-2); z-index: 3;
+  box-shadow: -6px 0 8px -7px rgba(0,0,0,.25);
+}
+
+/* เน้น 2 คอลัมน์หลักให้เด่นที่สุด: รหัสทรัพย์สิน + ชื่อทรัพย์สิน */
+.asset-table td.inv-cell {
+  font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: .01em;
+  background: var(--accent-tint); min-width: 168px;
+}
+.asset-table th.th-inv { color: var(--accent); font-size: 11px; background: var(--accent-tint); }
+.asset-table td.col-desc {
+  font-size: 14.5px; font-weight: 600; color: var(--text);
+  min-width: 230px; max-width: 380px;
+}
+.asset-table th.th-desc { color: var(--accent); font-size: 11px; }
+/* คอลัมน์ประกอบให้เบาลง ไม่แย่งสายตา */
+.asset-table td.c-lg, .asset-table td.c-xl, .asset-table td.c-md {
+  color: var(--muted); font-size: 12.5px;
+}
+.asset-table tbody tr { border-left: 3px solid transparent; }
+.asset-table tbody tr:nth-child(even) td:not(.inv-cell):not(.col-yn) { background: var(--surface-2); }
 tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(--accent-tint); }
 .yn-box { width: 21px; height: 21px; cursor: pointer; }
 .yn-box.yes { accent-color: var(--ok); }
