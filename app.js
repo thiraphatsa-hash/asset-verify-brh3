@@ -1,15 +1,15 @@
 /**
- * Asset Verification — UI logic (โครงเดียวกับ supabase-web/app.js ของ MCR)
+ * Asset Verification — UI logic
+ * โครงสร้าง: หน้าหลัก (เลือกรอบตรวจ) → รายการทรัพย์สินของรอบ (ตาราง/การ์ด) → สรุปผล
  * ต้องโหลดหลัง: supabase-js, config.js, src/assetStore.js
  */
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v1.0.0';
+  const APP_VERSION = 'v2.0.0';
   const CFG = window.ASSET_CONFIG || {};
-  const SITE = CFG.SITE || 'BRH3';
 
-  // ── รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง 306 รายการ — ส่วนปีมี "YY" ได้) ──
+  // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
   const INV_RE = /RT-[A-Z0-9]{4}-[A-Z0-9]{2}-\d{4}/;
 
   const RESULTS = {
@@ -24,23 +24,25 @@ const App = (() => {
   const state = {
     profile: null,
     canWrite: false,
+    sessions: [],
+    logSummary: [],
+    activeSession: null,
     master: [],
     logs: [],
     queueItems: [],
     latest: new Map(),
+    selection: new Set(),
     users: [],
     authMode: 'login',
-    activeTab: 'fixed',
-    ui: {
-      F: { q: '', cat: '', staff: '', status: '', sort: 'inv' },
-      R: { q: '', cat: '', status: '', sort: 'inv' }
-    },
-    rec: null,               // ฟอร์มบันทึกที่เปิดอยู่
+    page: 'home',
+    home: { q: '', status: '', sort: 'created' },
+    ui: { type: 'FIXED', view: 'table', q: '', cat: '', staff: '', status: '', sort: 'inv' },
+    rec: null,
     scan: { active: false, paused: false, stream: null, reader: null, timer: null, lastCode: '' },
-    bulk: { type: 'FIXED', cat: '', resultKey: 'FOUND_NORMAL', count: 0 },
+    bulk: { cat: '', resultKey: 'FOUND_NORMAL', count: 0 },
     importData: null,
     flushing: false,
-    realtimeOn: false,
+    channel: null,
     pendTimer: null
   };
 
@@ -54,7 +56,7 @@ const App = (() => {
     box.className = 'toast' + (kind ? ' ' + kind : '');
     box.textContent = msg;
     el('toastContainer').appendChild(box);
-    setTimeout(() => { box.remove(); }, 3800);
+    setTimeout(() => { box.remove(); }, 3600);
   }
   function busy(text) { el('busyText').textContent = text || 'กำลังดำเนินการ...'; el('busyOverlay').classList.remove('hidden'); }
   function busyHide() { el('busyOverlay').classList.add('hidden'); }
@@ -63,7 +65,11 @@ const App = (() => {
     try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; }
     catch (e) { return null; }
   }
-  function pad2(n) { return String(n).padStart(2, '0'); }
+  const pad2 = (n) => String(n).padStart(2, '0');
+  function todayISO() {
+    const d = new Date();
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
   function thaiDT(iso) {
     if (!iso) return '';
     const d = new Date(iso);
@@ -96,10 +102,10 @@ const App = (() => {
       o.frequency.value = 1250; g.gain.value = 0.08;
       o.start(); o.stop(beepCtx.currentTime + 0.12);
     } catch (e) {}
-    if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
+    if (navigator.vibrate) { try { navigator.vibrate(50); } catch (e) {} }
   }
 
-  // ── โหลดไลบรารีตอนใช้จริง (ประหยัดเน็ตหน้างาน) ─────────────────────────────
+  // ── โหลดไลบรารีตอนใช้จริง ──────────────────────────────────────────────────
   const LIBS = {
     xlsx: { url: 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', global: 'XLSX' },
     zxing: { url: 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js', global: 'ZXing' }
@@ -122,7 +128,7 @@ const App = (() => {
     return libLoading[name];
   }
 
-  // ── คิว offline (IndexedDB — เก็บทั้ง record และรูป กันข้อมูลหายตอนเน็ตหลุด) ──
+  // ── คิวออฟไลน์ (IndexedDB) ─────────────────────────────────────────────────
   let idb = null;
   function idbOpen() {
     return new Promise((resolve, reject) => {
@@ -169,14 +175,16 @@ const App = (() => {
           const photos = it.photos || [];
           for (let p = 0; p < photos.length; p++) {
             if (!photos[p].path) {
-              photos[p].path = await AssetStore.uploadPhoto(photos[p].dataUrl, it.inventoryNumber);
+              photos[p].path = await AssetStore.uploadPhoto(photos[p].dataUrl, it.sessionId, it.inventoryNumber);
               await qPut(it);   // จำความคืบหน้า — retry รอบหน้าไม่อัปโหลดรูปซ้ำ
             }
           }
           const saved = await AssetStore.saveVerify({
             clientId: it.clientId,
+            sessionId: it.sessionId,
             inventoryNumber: it.inventoryNumber,
             assetType: it.assetType,
+            site: it.site,
             result: it.result,
             condition: it.condition || null,
             method: it.method,
@@ -215,10 +223,10 @@ const App = (() => {
     flushQueue();
   }
 
-  // ── รวม log จริง + คิวรอส่ง แล้วหา "สถานะล่าสุด" ต่อรหัส ─────────────────────
+  // ── รวม log จริง + คิวรอส่ง → สถานะล่าสุดต่อรหัส ─────────────────────────────
   function queueToLog(it) {
     return {
-      logId: 'pending-' + it.clientId, clientId: it.clientId,
+      logId: 'pending-' + it.clientId, clientId: it.clientId, sessionId: it.sessionId,
       inventoryNumber: it.inventoryNumber, assetType: it.assetType,
       result: it.result, condition: it.condition, method: it.method,
       inspector: it.inspector, locationText: it.locationText,
@@ -228,7 +236,13 @@ const App = (() => {
       photoCount: (it.photos || []).length, pending: true
     };
   }
-  function allLogs() { return state.logs.concat(state.queueItems.map(queueToLog)); }
+  function queueOfSession(id) {
+    return state.queueItems.filter((q) => q.sessionId === id).map(queueToLog);
+  }
+  function allLogs() {
+    const id = state.activeSession ? state.activeSession.sessionId : null;
+    return state.logs.concat(queueOfSession(id));
+  }
   function rebuildIndex() {
     const map = new Map();
     allLogs().forEach((l) => {
@@ -239,6 +253,8 @@ const App = (() => {
   }
   function addLogLocal(log) {
     if (!log || !log.logId) return;
+    const active = state.activeSession ? state.activeSession.sessionId : null;
+    if (log.sessionId && active && log.sessionId !== active) return;
     const dup = state.logs.some((l) => l.logId === log.logId ||
       (log.clientId && l.clientId === log.clientId));
     if (!dup) state.logs.push(log);
@@ -349,11 +365,8 @@ const App = (() => {
     el('topUser').textContent = inspectorName() + ' · ' +
       (p.role === 'admin' ? 'ผู้ดูแล' : (p.role === 'counter' ? 'ผู้ตรวจ' : 'ดูอย่างเดียว'));
     el('appVersion').textContent = APP_VERSION;
-    el('topTitle').textContent = CFG.APP_TITLE || 'ตรวจนับทรัพย์สิน';
     el('nav-manage').classList.toggle('hidden', p.role !== 'admin');
-    document.querySelectorAll('.tool-buttons').forEach((n) => {
-      n.classList.toggle('hidden', !state.canWrite);
-    });
+    el('newRoundBtn').classList.toggle('hidden', !state.canWrite);
     document.querySelector('.scan-fab').classList.toggle('hidden', !state.canWrite);
   }
 
@@ -369,7 +382,7 @@ const App = (() => {
       prof = await AssetStore.getMyProfile();
       if (prof) cacheSet('avProfile', prof);
     } catch (e) {
-      prof = cacheGet('avProfile');   // ออฟไลน์: ใช้ profile ล่าสุดที่เคยโหลดได้
+      prof = cacheGet('avProfile');
       if (!prof) return showLogin('เชื่อมต่อไม่ได้: ' + e.message);
     }
     if (!prof) return showLogin();
@@ -377,25 +390,44 @@ const App = (() => {
     state.profile = prof;
     showApp();
     await loadQueue();
-    state.master = cacheGet('avMaster') || [];
-    state.logs = cacheGet('avLogs') || [];
-    afterDataChange();
+    state.sessions = cacheGet('avSessions') || [];
+    state.logSummary = cacheGet('avLogSummary') || [];
+    renderSessions();
+    go('home');
     refreshAll(true);
     if (prof.role === 'admin') loadUsers(true);
   }
 
-  // ── โหลด/รีเฟรชข้อมูล + Realtime ───────────────────────────────────────────
+  // ── โหลดข้อมูล ─────────────────────────────────────────────────────────────
   async function refreshAll(silent) {
     if (!state.profile) return;
     try {
-      if (!silent) busy('กำลังโหลดข้อมูลล่าสุด...');
-      const results = await Promise.all([AssetStore.loadMaster(), AssetStore.loadLogs()]);
-      state.master = results[0];
-      state.logs = results[1];
-      cacheSet('avMaster', state.master);
-      cacheSet('avLogs', state.logs);
-      afterDataChange();
-      ensureRealtime();
+      if (!silent) busy('กำลังโหลดข้อมูล...');
+      const results = await Promise.all([AssetStore.listSessions(), AssetStore.loadLogsSummary()]);
+      state.sessions = results[0];
+      state.logSummary = results[1];
+      cacheSet('avSessions', state.sessions);
+      cacheSet('avLogSummary', state.logSummary);
+      renderSessions();
+      if (state.activeSession) {
+        const fresh = state.sessions.find((s) => s.sessionId === state.activeSession.sessionId);
+        if (!fresh) {
+          state.activeSession = null;
+          state.master = [];
+          state.logs = [];
+          go('home');
+          toast('รอบตรวจนี้ถูกลบไปแล้ว', 'warn');
+        } else {
+          state.activeSession = fresh;
+          const data = await Promise.all([
+            AssetStore.loadMaster(fresh.sessionId), AssetStore.loadLogs(fresh.sessionId)]);
+          state.master = data[0];
+          state.logs = data[1];
+          cacheSet('avMaster_' + fresh.sessionId, state.master);
+          cacheSet('avLogs_' + fresh.sessionId, state.logs);
+          afterDataChange();
+        }
+      }
       flushQueue();
       if (!silent) toast('อัปเดตข้อมูลแล้ว', 'success');
     } catch (e) {
@@ -405,68 +437,410 @@ const App = (() => {
     }
   }
   function ensureRealtime() {
-    if (state.realtimeOn) return;
+    const id = state.activeSession ? state.activeSession.sessionId : null;
+    if (!id) return;
+    if (state.channel) { AssetStore.unsubscribe(state.channel); state.channel = null; }
     try {
-      AssetStore.subscribeLogs((log) => {
+      state.channel = AssetStore.subscribeLogs(id, (log) => {
         addLogLocal(log);
-        cacheSet('avLogs', state.logs);
+        cacheSet('avLogs_' + id, state.logs);
         afterDataChange();
       });
-      state.realtimeOn = true;
     } catch (e) {}
   }
   function afterDataChange() {
     rebuildIndex();
     renderFilterOptions();
     renderLocList();
-    renderList('F');
-    renderList('R');
-    if (state.activeTab === 'dash') renderDash();
+    renderRoundBanner();
+    renderList();
+    renderSessions();
+    if (state.page === 'dash') renderDash();
     updateSyncChip();
   }
 
-  // ── ตัวกรอง + รายการ ───────────────────────────────────────────────────────
-  function typeOf(t) { return t === 'F' ? 'FIXED' : 'RENTAL'; }
-  function mastersOf(t) {
-    const type = typeOf(t);
-    return state.master.filter((a) => a.assetType === type);
+  // ── หน้าหลัก: รอบตรวจ ──────────────────────────────────────────────────────
+  function sessionStats(s) {
+    const id = s.sessionId;
+    const seen = new Set();
+    let found = 0, damaged = 0, notfound = 0, moved = 0;
+    const latest = new Map();
+    const rows = state.logSummary.filter((l) => l.sessionId === id)
+      .concat(queueOfSession(id));
+    rows.forEach((l) => {
+      if (l.unregistered) return;
+      const cur = latest.get(l.inventoryNumber);
+      if (!cur || String(l.verifiedAt) >= String(cur.verifiedAt)) latest.set(l.inventoryNumber, l);
+    });
+    latest.forEach((l) => {
+      seen.add(l.inventoryNumber);
+      const c = classify(l);
+      if (c === 'found') found++;
+      else if (c === 'damaged') damaged++;
+      else if (c === 'notfound') notfound++;
+      else if (c === 'moved') moved++;
+    });
+    const total = s.assetCount || 0;
+    const done = Math.min(seen.size, total || seen.size);
+    return {
+      total: total, done: done, pending: Math.max(total - done, 0),
+      found: found, damaged: damaged, notfound: notfound, moved: moved,
+      pct: total ? Math.round(done * 100 / total) : 0
+    };
+  }
+  function setHomeSearch(v) { state.home.q = v.trim(); renderSessions(); }
+  function setHomeStatus(v) { state.home.status = v; renderSessions(); }
+  function setHomeSort(v) { state.home.sort = v; renderSessions(); }
+  function renderSessions() {
+    let list = state.sessions.slice();
+    const h = state.home;
+    if (h.q) {
+      const words = h.q.toLowerCase().split(/\s+/).filter(Boolean);
+      list = list.filter((s) => {
+        const hay = [s.site, s.roundName, s.inspectorName, s.createdBy, s.costCenter,
+          thaiD(s.countDateFrom), s.note].join(' ').toLowerCase();
+        return words.every((w) => hay.indexOf(w) >= 0);
+      });
+    }
+    if (h.status) {
+      list = list.filter((s) => {
+        const st = sessionStats(s);
+        return h.status === 'done' ? st.pct >= 100 : st.pct < 100;
+      });
+    }
+    if (h.sort === 'site') list.sort((a, b) => String(a.site).localeCompare(String(b.site), 'th'));
+    else if (h.sort === 'progress') list.sort((a, b) => sessionStats(a).pct - sessionStats(b).pct);
+    else list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+
+    el('homeCount').textContent = list.length + ' รอบ';
+    if (!list.length) {
+      el('sessionList').innerHTML = '<p class="empty-note">' +
+        (state.sessions.length ? 'ไม่พบรอบตรวจตามเงื่อนไข'
+          : 'ยังไม่มีรอบตรวจ — กด "＋ สร้างรอบตรวจ" เพื่ออัปโหลดไฟล์ทะเบียนทรัพย์สินรอบแรก') + '</p>';
+      return;
+    }
+    el('sessionList').innerHTML = list.map((s) => {
+      const st = sessionStats(s);
+      const done = st.pct >= 100;
+      const dates = s.countDateFrom
+        ? thaiD(s.countDateFrom) + (s.countDateTo && s.countDateTo !== s.countDateFrom
+          ? ' – ' + thaiD(s.countDateTo) : '')
+        : thaiD(s.createdAt);
+      return '<article class="session-card" data-id="' + esc(s.sessionId) + '">' +
+        '<div class="sc-head">' +
+          '<div><h3>' + esc(s.site || '-') + '</h3>' +
+          '<p class="sc-sub">' + esc(s.roundName || 'รอบตรวจ') +
+          (s.costCenter ? ' · ' + esc(s.costCenter) : '') + '</p></div>' +
+          '<span class="pill ' + (done ? 'pill-ok' : 'pill-warn') + '">' +
+          (done ? 'เสร็จสิ้น' : 'กำลังตรวจ') + '</span>' +
+        '</div>' +
+        '<p class="sc-meta">📅 ' + esc(dates) + ' · 📦 ' + st.total + ' รายการ' +
+          ' (Fixed ' + (s.fixedCount || 0) + ' · เช่า ' + (s.rentalCount || 0) + ')' +
+          (s.inspectorName ? ' · 👤 ' + esc(s.inspectorName) : '') + '</p>' +
+        '<div class="progress-line"><span>ตรวจแล้ว ' + st.done + ' / ' + st.total +
+          '</span><span>' + st.pct + '%</span></div>' +
+        '<div class="bar"><i class="' + (done ? 'ok' : '') + '" style="width:' + st.pct + '%"></i></div>' +
+        '<div class="sc-chips">' +
+          '<span class="stat-chip st-found">พบ ' + st.found + '</span>' +
+          '<span class="stat-chip st-damaged">ชำรุด ' + st.damaged + '</span>' +
+          '<span class="stat-chip st-notfound">ไม่พบ ' + st.notfound + '</span>' +
+          '<span class="stat-chip st-moved">ย้ายออก ' + st.moved + '</span>' +
+          '<span class="stat-chip st-pending">ค้าง ' + st.pending + '</span>' +
+        '</div>' +
+        '<div class="sc-actions">' +
+          '<button class="primary-button" type="button" data-act="open">เปิดตรวจนับ</button>' +
+          '<button class="outline-button" type="button" data-act="dash">Dashboard</button>' +
+          (state.canWrite ? '<button class="danger-ghost" type="button" data-act="del" title="ลบรอบนี้">🗑</button>' : '') +
+        '</div>' +
+      '</article>';
+    }).join('');
+  }
+  async function openSession(id, target) {
+    const s = state.sessions.find((x) => x.sessionId === id);
+    if (!s) return toast('ไม่พบรอบตรวจ', 'error');
+    state.activeSession = s;
+    state.selection.clear();
+    state.master = cacheGet('avMaster_' + id) || [];
+    state.logs = cacheGet('avLogs_' + id) || [];
+    afterDataChange();
+    go(target || 'list');
+    try {
+      busy('กำลังโหลดทะเบียนของรอบนี้...');
+      const data = await Promise.all([AssetStore.loadMaster(id), AssetStore.loadLogs(id)]);
+      state.master = data[0];
+      state.logs = data[1];
+      cacheSet('avMaster_' + id, state.master);
+      cacheSet('avLogs_' + id, state.logs);
+      afterDataChange();
+      ensureRealtime();
+    } catch (e) {
+      toast('โหลดข้อมูลรอบนี้ไม่สำเร็จ: ' + e.message, 'error');
+    } finally {
+      busyHide();
+    }
+  }
+  async function deleteSession(id) {
+    const s = state.sessions.find((x) => x.sessionId === id);
+    if (!s) return;
+    const st = sessionStats(s);
+    const msg = 'ลบรอบตรวจ "' + (s.site || '') + ' · ' + (s.roundName || '') + '" ถาวร?\n\n' +
+      'จะลบทะเบียน ' + st.total + ' รายการ และผลตรวจ ' + st.done + ' รายการของรอบนี้ทั้งหมด\n' +
+      'การลบนี้กู้คืนไม่ได้';
+    if (!window.confirm(msg)) return;
+    try {
+      busy('กำลังลบรอบตรวจ...');
+      await AssetStore.deleteSession(id);
+      if (state.activeSession && state.activeSession.sessionId === id) {
+        state.activeSession = null;
+        state.master = [];
+        state.logs = [];
+        go('home');
+      }
+      try { localStorage.removeItem('avMaster_' + id); localStorage.removeItem('avLogs_' + id); } catch (e) {}
+      await refreshAll(true);
+      toast('ลบรอบตรวจแล้ว', 'success');
+    } catch (e) {
+      toast('ลบไม่สำเร็จ: ' + e.message, 'error');
+    } finally {
+      busyHide();
+    }
+  }
+
+  // ── นำเข้าไฟล์ทะเบียน (สร้างรอบใหม่) ────────────────────────────────────────
+  const normHead = (v) => String(v || '').replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim().toUpperCase();
+  function parseSheet(ws) {
+    const XLSX = window.XLSX;
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+    let hr = -1, invCol = -1;
+    for (let r = 0; r < Math.min(rows.length, 20); r++) {
+      const c = (rows[r] || []).findIndex((v) => normHead(v) === 'INVENTORY NUMBER');
+      if (c >= 0) { hr = r; invCol = c; break; }
+    }
+    if (hr < 0) return null;
+    const width = Math.max((rows[hr] || []).length, (rows[hr + 1] || []).length);
+    const labels = [];
+    for (let c = 0; c < width; c++) {
+      labels[c] = normHead((rows[hr] || [])[c]) || normHead((rows[hr + 1] || [])[c]) || '';
+    }
+    const col = (names) => {
+      for (let i = 0; i < names.length; i++) {
+        const idx = labels.indexOf(names[i]);
+        if (idx >= 0) return idx;
+      }
+      return -1;
+    };
+    const cell = (row, idx) => (idx >= 0 ? String(row[idx] == null ? '' : row[idx]).trim() : '');
+    const isRental = col(['MATERIAL']) >= 0;
+    const cols = isRental
+      ? { material: col(['MATERIAL']), desc: col(['DESCRIPTION']),
+          plant: col(['PLAN', 'PLANT']), sloc: col(['SLOC']) }
+      : { assetClass: col(['ASSET CLASS']), assetNumber: col(['ASSET NUMBER']),
+          subNumber: col(['SUB NUMB', 'SUB NUMBER']), desc: col(['DESCRIPTION']),
+          serial: col(['SERIAL NUMBER']), staff: col(['STAFF - TEXT', 'STAFF-TEXT', 'STAFF TEXT']),
+          site: col(['CURRENT SITE']) };
+    // หา Site/Cost center จากหัวรายงาน (แถวบนก่อนหัวตาราง)
+    let costCenter = '';
+    for (let r = 0; r < hr; r++) {
+      const line = (rows[r] || []).join(' ');
+      const m = line.match(/R-[A-Z0-9]{3,6}-[A-Z0-9]+/i) ||
+        line.match(/Site\/Cost center[.\s]*([A-Z0-9-]{3,})/i);
+      if (m) { costCenter = (m[1] || m[0]).replace(/\.+$/, '').toUpperCase(); break; }
+    }
+    const items = [];
+    for (let r = hr + 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const inv = normalizeCode(row[invCol]);
+      if (!inv) continue;
+      const item = {
+        inventoryNumber: inv,
+        assetType: isRental ? 'RENTAL' : 'FIXED',
+        categoryCode: inv.split('-')[1] || '',
+        description: cell(row, cols.desc)
+      };
+      if (isRental) {
+        item.materialCode = cell(row, cols.material);
+        item.plant = cell(row, cols.plant);
+        item.sloc = cell(row, cols.sloc);
+      } else {
+        item.assetClass = cell(row, cols.assetClass);
+        item.assetNumber = cell(row, cols.assetNumber);
+        item.subNumber = cell(row, cols.subNumber);
+        item.serialNumber = cell(row, cols.serial);
+        item.staffText = cell(row, cols.staff);
+        item.currentSite = cell(row, cols.site);
+      }
+      items.push(item);
+    }
+    return { type: isRental ? 'RENTAL' : 'FIXED', items: items, costCenter: costCenter };
+  }
+  async function readMasterFile(event) {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      busy('กำลังอ่านไฟล์...');
+      await ensureLibrary('xlsx');
+      const buf = await file.arrayBuffer();
+      const wb = window.XLSX.read(buf, { type: 'array' });
+      const byInv = new Map();
+      let costCenter = '';
+      wb.SheetNames.forEach((name) => {
+        const parsed = parseSheet(wb.Sheets[name]);
+        if (!parsed) return;
+        if (!costCenter && parsed.costCenter) costCenter = parsed.costCenter;
+        parsed.items.forEach((it) => { byInv.set(it.inventoryNumber, it); });
+      });
+      const rows = Array.from(byInv.values());
+      if (!rows.length) {
+        throw new Error('ไม่พบข้อมูลทรัพย์สินในไฟล์ — ต้องมีหัวคอลัมน์ "Inventory Number"');
+      }
+      const fixed = rows.filter((r) => r.assetType === 'FIXED').length;
+      const rental = rows.length - fixed;
+      // เดารหัสโครงการจากข้อมูลจริง
+      let site = '';
+      const cc = costCenter || (rows.find((r) => r.currentSite) || {}).currentSite || '';
+      const m = String(cc).match(/^R-([A-Z0-9]+)-/i);
+      if (m) site = m[1].toUpperCase();
+      if (!site) {
+        const plant = (rows.find((r) => r.plant) || {}).plant;
+        if (plant) site = String(plant).toUpperCase();
+      }
+      if (!site) site = (CFG.SITE || '').toUpperCase();
+
+      state.importData = { rows: rows, fileName: file.name, fixed: fixed, rental: rental };
+      el('uploadZoneText').textContent = '📄 ' + file.name;
+      el('importPreview').innerHTML =
+        'อ่านไฟล์สำเร็จ — <b>' + rows.length + '</b> รายการ ' +
+        '(Fixed Assets <b>' + fixed + '</b> · ของเช่า <b>' + rental + '</b>)' +
+        (cc ? '<br>Cost center ที่พบในไฟล์: <b>' + esc(cc) + '</b>' : '');
+      el('importPreview').classList.remove('hidden');
+      el('roundForm').classList.remove('hidden');
+      el('roundSite').value = site;
+      el('roundCostCenter').value = cc;
+      if (!el('roundFrom').value) el('roundFrom').value = todayISO();
+      if (!el('roundInspector').value) el('roundInspector').value = inspectorName();
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      busyHide();
+    }
+  }
+  function cancelImport() {
+    state.importData = null;
+    el('importPreview').classList.add('hidden');
+    el('roundForm').classList.add('hidden');
+    el('uploadZoneText').textContent = 'แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน';
+    go('home');
+  }
+  async function confirmImport() {
+    if (!state.importData) return toast('ยังไม่ได้เลือกไฟล์', 'warn');
+    const site = el('roundSite').value.trim().toUpperCase();
+    if (!site) return toast('กรอกรหัสโครงการ (Site) ก่อน', 'warn');
+    const from = el('roundFrom').value;
+    if (!from) return toast('เลือกวันที่เริ่มตรวจก่อน', 'warn');
+    const data = state.importData;
+    const dup = state.sessions.find((s) => s.site === site && s.countDateFrom === from);
+    if (dup && !window.confirm('มีรอบตรวจของโครงการ ' + site + ' วันที่เดียวกันอยู่แล้ว\nยืนยันสร้างรอบใหม่อีกรอบ?')) return;
+    try {
+      busy('กำลังสร้างรอบตรวจ...');
+      const session = await AssetStore.createSession({
+        site: site,
+        costCenter: el('roundCostCenter').value.trim(),
+        roundName: el('roundName').value.trim() || null,
+        countDateFrom: from,
+        countDateTo: el('roundTo').value || null,
+        inspectorName: el('roundInspector').value.trim(),
+        note: el('roundNote').value.trim(),
+        fileName: data.fileName,
+        assetCount: data.rows.length,
+        fixedCount: data.fixed,
+        rentalCount: data.rental,
+        status: 'Active',
+        createdBy: inspectorName()
+      });
+      busy('กำลังนำเข้าทะเบียน ' + data.rows.length + ' รายการ...');
+      const rows = data.rows.map((r) => Object.assign({ site: site }, r));
+      try {
+        await AssetStore.importAssets(session.sessionId, rows, inspectorName());
+      } catch (e) {
+        await AssetStore.deleteSession(session.sessionId);   // ไม่ให้เหลือรอบเปล่าค้างไว้
+        throw e;
+      }
+      state.importData = null;
+      el('importPreview').classList.add('hidden');
+      el('roundForm').classList.add('hidden');
+      el('uploadZoneText').textContent = 'แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน';
+      ['roundName', 'roundNote', 'roundTo'].forEach((id) => { el(id).value = ''; });
+      await refreshAll(true);
+      toast('สร้างรอบตรวจแล้ว นำเข้า ' + data.rows.length + ' รายการ', 'success');
+      openSession(session.sessionId);
+    } catch (e) {
+      toast('สร้างรอบไม่สำเร็จ: ' + e.message, 'error');
+    } finally {
+      busyHide();
+    }
+  }
+
+  // ── รายการทรัพย์สินในรอบ ───────────────────────────────────────────────────
+  function renderRoundBanner() {
+    const s = state.activeSession;
+    const box = el('roundBanner');
+    if (!s) { box.innerHTML = ''; return; }
+    const st = sessionStats(s);
+    const dates = s.countDateFrom
+      ? thaiD(s.countDateFrom) + (s.countDateTo && s.countDateTo !== s.countDateFrom
+        ? ' – ' + thaiD(s.countDateTo) : '') : '';
+    box.innerHTML =
+      '<div class="rb-main"><h2>' + esc(s.site || '') + '</h2>' +
+      '<p>' + esc(s.roundName || 'รอบตรวจ') + (s.costCenter ? ' · ' + esc(s.costCenter) : '') +
+      (dates ? ' · ' + esc(dates) : '') + '</p></div>' +
+      '<div class="rb-progress"><div class="progress-line"><span>ตรวจแล้ว ' + st.done + ' / ' + st.total +
+      '</span><span>' + st.pct + '%</span></div>' +
+      '<div class="bar"><i class="' + (st.pct >= 100 ? 'ok' : '') + '" style="width:' + st.pct + '%"></i></div></div>';
+  }
+  function mastersOfType() {
+    return state.master.filter((a) => a.assetType === state.ui.type);
   }
   function renderFilterOptions() {
-    ['F', 'R'].forEach((t) => {
-      const sel = el('cat' + t);
-      const cur = state.ui[t].cat;
-      const counts = {};
-      mastersOf(t).forEach((a) => {
-        const c = a.categoryCode || (a.inventoryNumber || '').split('-')[1] || '?';
-        counts[c] = (counts[c] || 0) + 1;
-      });
-      const cats = Object.keys(counts).sort();
-      let html = '<option value="">ทุกหมวด (' + mastersOf(t).length + ')</option>';
-      cats.forEach((c) => {
-        html += '<option value="' + esc(c) + '">RT-' + esc(c) + ' (' + counts[c] + ')</option>';
-      });
-      sel.innerHTML = html;
-      sel.value = cats.indexOf(cur) >= 0 ? cur : '';
-      state.ui[t].cat = sel.value;
-    });
-    // ผู้รับผิดชอบ (เฉพาะ Fixed — ข้อมูลจริงว่าง 80% จึงต้องมี "(ไม่ระบุ)")
-    const staffSel = el('staffF');
-    const cur = state.ui.F.staff;
+    const list = mastersOfType();
+    const sel = el('catFilter');
+    const cur = state.ui.cat;
     const counts = {};
+    list.forEach((a) => {
+      const c = a.categoryCode || (a.inventoryNumber || '').split('-')[1] || '?';
+      counts[c] = (counts[c] || 0) + 1;
+    });
+    const cats = Object.keys(counts).sort();
+    let html = '<option value="">ทุกหมวด (' + list.length + ')</option>';
+    cats.forEach((c) => {
+      html += '<option value="' + esc(c) + '">RT-' + esc(c) + ' (' + counts[c] + ')</option>';
+    });
+    sel.innerHTML = html;
+    sel.value = cats.indexOf(cur) >= 0 ? cur : '';
+    state.ui.cat = sel.value;
+
+    const staffSel = el('staffFilter');
+    const curStaff = state.ui.staff;
+    const sc = {};
     let blank = 0;
-    mastersOf('F').forEach((a) => {
+    list.forEach((a) => {
       const s = (a.staffText || '').trim();
       if (!s) { blank++; return; }
-      counts[s] = (counts[s] || 0) + 1;
+      sc[s] = (sc[s] || 0) + 1;
     });
-    let html = '<option value="">ผู้รับผิดชอบ: ทั้งหมด</option>';
-    if (blank) html += '<option value="__NONE__">(ไม่ระบุ) — ' + blank + '</option>';
-    Object.keys(counts).sort((a, b) => a.localeCompare(b, 'th')).forEach((s) => {
-      html += '<option value="' + esc(s) + '">' + esc(s) + ' (' + counts[s] + ')</option>';
+    const hasStaff = Object.keys(sc).length > 0;
+    staffSel.classList.toggle('hidden', state.ui.type === 'RENTAL' && !hasStaff);
+    let h2 = '<option value="">ผู้รับผิดชอบ: ทั้งหมด</option>';
+    if (blank) h2 += '<option value="__NONE__">(ไม่ระบุ) — ' + blank + '</option>';
+    Object.keys(sc).sort((a, b) => a.localeCompare(b, 'th')).forEach((s) => {
+      h2 += '<option value="' + esc(s) + '">' + esc(s) + ' (' + sc[s] + ')</option>';
     });
-    staffSel.innerHTML = html;
-    staffSel.value = cur && (cur === '__NONE__' || counts[cur]) ? cur : '';
-    state.ui.F.staff = staffSel.value;
+    staffSel.innerHTML = h2;
+    staffSel.value = curStaff && (curStaff === '__NONE__' || sc[curStaff]) ? curStaff : '';
+    state.ui.staff = staffSel.value;
+
+    el('tabCountF').textContent = state.master.filter((a) => a.assetType === 'FIXED').length;
+    el('tabCountR').textContent = state.master.filter((a) => a.assetType === 'RENTAL').length;
   }
   function renderLocList() {
     const seen = {};
@@ -478,11 +852,11 @@ const App = (() => {
     el('locList').innerHTML = opts.slice(0, 40)
       .map((v) => '<option value="' + esc(v) + '"></option>').join('');
   }
-  function filteredAssets(t) {
-    const ui = state.ui[t];
-    let list = mastersOf(t);
+  function filteredAssets() {
+    const ui = state.ui;
+    let list = mastersOfType();
     if (ui.cat) list = list.filter((a) => (a.categoryCode || '') === ui.cat);
-    if (t === 'F' && ui.staff) {
+    if (ui.staff) {
       list = ui.staff === '__NONE__'
         ? list.filter((a) => !(a.staffText || '').trim())
         : list.filter((a) => (a.staffText || '').trim() === ui.staff);
@@ -516,75 +890,251 @@ const App = (() => {
     }
     return sorted;
   }
-  function renderList(t) {
-    const list = filteredAssets(t);
-    let done = 0;
-    const html = list.map((a) => {
-      const latest = state.latest.get(a.inventoryNumber);
-      const cls = classify(latest);
-      if (cls !== 'pending') done++;
-      const meta = [];
-      if (t === 'F') {
-        if (a.staffText) meta.push('👤 ' + esc(a.staffText));
-        if (a.serialNumber) meta.push('S/N ' + esc(a.serialNumber));
-      } else {
-        if (a.materialCode) meta.push('MAT ' + esc(a.materialCode));
-        if (a.sloc) meta.push('Sloc ' + esc(a.sloc));
-      }
-      let verifyLine = '';
-      if (latest) {
-        verifyLine = '<div class="asset-meta">🕓 ' + esc(thaiDT(latest.verifiedAt)) +
-          ' · ' + esc(latest.inspector || '') +
-          ' <span class="method-badge ' + (latest.method === 'SCAN' ? 'm-scan' : 'm-manual') + '">' +
-          latest.method + '</span>' +
-          (latest.locationText ? ' · 📌 ' + esc(latest.locationText) : '') +
-          (latest.pending ? ' <span class="pending-sync">⏳ รอส่ง</span>' : '') +
-          '</div>';
-      }
-      return '<div class="asset-row st-' + cls + '" data-inv="' + esc(a.inventoryNumber) + '">' +
-        '<div class="asset-row-top"><span class="asset-inv mono">' + esc(a.inventoryNumber) + '</span>' +
-        '<span class="status-badge st-' + cls + '">' + esc(statusLabel(latest)) + '</span></div>' +
-        '<div class="asset-desc">' + esc(a.description || '') + '</div>' +
-        (meta.length ? '<div class="asset-meta">' + meta.join(' · ') + '</div>' : '') +
-        verifyLine + '</div>';
-    }).join('');
-    el('list' + t).innerHTML = html ||
-      '<p class="empty-note">ไม่พบรายการตามเงื่อนไข' +
-      (state.master.length ? '' : ' — ยังไม่ได้นำเข้าทะเบียน (แท็บ จัดการ)') + '</p>';
-    el('counter' + t).textContent = 'ตรวจแล้ว ' + done + ' / ' + list.length;
+  function statusCell(latest) {
+    const cls = classify(latest);
+    return '<span class="pill st-' + cls + '">' + esc(statusLabel(latest)) + '</span>';
   }
-  function setSearch(t, v) { state.ui[t].q = v.trim(); renderList(t); }
-  function setCat(t, v) { state.ui[t].cat = v; renderList(t); }
-  function setStaff(v) { state.ui.F.staff = v; renderList('F'); }
-  function setSort(t, v) { state.ui[t].sort = v; renderList(t); }
-  function setStatus(t, v) {
-    state.ui[t].status = v;
-    document.querySelectorAll('#statusChips' + t + ' .chip').forEach((c) => {
+  function verifyMeta(l) {
+    if (!l) return '<span class="text-faint">—</span>';
+    return '<span class="vmeta">' + esc(l.inspector || '') +
+      '<small>' + esc(thaiDT(l.verifiedAt)) +
+      ' · <b class="m-' + (l.method === 'SCAN' ? 'scan' : 'manual') + '">' + l.method + '</b>' +
+      (l.pending ? ' · <b class="pending-sync">รอส่ง</b>' : '') + '</small></span>';
+  }
+  function renderList() {
+    if (!state.activeSession) {
+      el('assetTbody').innerHTML = '';
+      el('cardWrap').innerHTML = '';
+      return;
+    }
+    const list = filteredAssets();
+    let done = 0;
+    list.forEach((a) => {
+      if (classify(state.latest.get(a.inventoryNumber)) !== 'pending') done++;
+    });
+    el('counter').textContent = 'ตรวจแล้ว ' + done + ' / ' + list.length;
+    const isFixed = state.ui.type === 'FIXED';
+    const tableMode = state.ui.view === 'table';
+    el('tableWrap').classList.toggle('hidden', !tableMode);
+    el('cardWrap').classList.toggle('hidden', tableMode);
+
+    if (tableMode) {
+      const allSel = list.length > 0 && list.every((a) => state.selection.has(a.inventoryNumber));
+      el('assetThead').innerHTML = '<tr>' +
+        (state.canWrite ? '<th class="col-check"><input type="checkbox" id="checkAll"' +
+          (allSel ? ' checked' : '') + ' title="เลือกทั้งหมดที่กรองอยู่"></th>' : '') +
+        '<th>รหัสทรัพย์สิน</th><th>ชื่อทรัพย์สิน</th>' +
+        (isFixed ? '<th class="col-hide-sm">ผู้รับผิดชอบ</th>' : '<th class="col-hide-sm">Material</th>') +
+        '<th class="col-status">สถานะ</th><th class="col-hide-sm">ตรวจโดย</th>' +
+        (state.canWrite ? '<th class="col-quick">บันทึกเร็ว</th>' : '') +
+        '</tr>';
+      el('assetTbody').innerHTML = list.map((a) => {
+        const latest = state.latest.get(a.inventoryNumber);
+        const cls = classify(latest);
+        const inv = esc(a.inventoryNumber);
+        const sel = state.selection.has(a.inventoryNumber);
+        return '<tr class="row-' + cls + (sel ? ' row-selected' : '') + '" data-inv="' + inv + '">' +
+          (state.canWrite ? '<td class="col-check"><input type="checkbox" class="row-check" data-inv="' +
+            inv + '"' + (sel ? ' checked' : '') + '></td>' : '') +
+          '<td class="mono nowrap">' + inv + '</td>' +
+          '<td class="col-desc">' + esc(a.description || '') +
+            (a.serialNumber ? '<small>S/N ' + esc(a.serialNumber) + '</small>' : '') +
+            '<span class="sm-status">' + statusCell(latest) + '</span></td>' +
+          '<td class="col-hide-sm">' + esc(isFixed
+            ? ((a.staffText || '').trim() || '—') : (a.materialCode || '—')) + '</td>' +
+          '<td class="col-status">' + statusCell(latest) + '</td>' +
+          '<td class="col-hide-sm">' + verifyMeta(latest) + '</td>' +
+          (state.canWrite ? '<td class="col-quick">' +
+            '<button class="qbtn ok" data-act="FOUND_NORMAL" title="พบ · ปกติ">✓</button>' +
+            '<button class="qbtn no" data-act="NOT_FOUND" title="ไม่พบ">✕</button>' +
+            '<button class="qbtn more" data-act="open" title="รายละเอียด">⋯</button></td>' : '') +
+          '</tr>';
+      }).join('') || '<tr><td colspan="7"><p class="empty-note">ไม่พบรายการตามเงื่อนไข</p></td></tr>';
+    } else {
+      el('cardWrap').innerHTML = list.map((a) => {
+        const latest = state.latest.get(a.inventoryNumber);
+        const cls = classify(latest);
+        const meta = [];
+        if (isFixed) {
+          if (a.staffText) meta.push('👤 ' + esc(a.staffText));
+          if (a.serialNumber) meta.push('S/N ' + esc(a.serialNumber));
+        } else {
+          if (a.materialCode) meta.push('MAT ' + esc(a.materialCode));
+          if (a.sloc) meta.push('Sloc ' + esc(a.sloc));
+        }
+        return '<div class="asset-row st-' + cls + '" data-inv="' + esc(a.inventoryNumber) + '">' +
+          '<div class="asset-row-top"><span class="asset-inv mono">' + esc(a.inventoryNumber) + '</span>' +
+          statusCell(latest) + '</div>' +
+          '<div class="asset-desc">' + esc(a.description || '') + '</div>' +
+          (meta.length ? '<div class="asset-meta">' + meta.join(' · ') + '</div>' : '') +
+          (latest ? '<div class="asset-meta">🕓 ' + esc(thaiDT(latest.verifiedAt)) + ' · ' +
+            esc(latest.inspector || '') + ' · ' + latest.method +
+            (latest.locationText ? ' · 📌 ' + esc(latest.locationText) : '') +
+            (latest.pending ? ' · <b class="pending-sync">รอส่ง</b>' : '') + '</div>' : '') +
+          '</div>';
+      }).join('') || '<p class="empty-note">ไม่พบรายการตามเงื่อนไข</p>';
+    }
+    updateBulkBar();
+  }
+  function setType(t) {
+    state.ui.type = t;
+    state.selection.clear();
+    el('typeFIXED').classList.toggle('active', t === 'FIXED');
+    el('typeRENTAL').classList.toggle('active', t === 'RENTAL');
+    renderFilterOptions();
+    renderList();
+  }
+  function setView(v) {
+    state.ui.view = v;
+    cacheSet('avView', v);
+    el('viewTable').classList.toggle('active', v === 'table');
+    el('viewCard').classList.toggle('active', v === 'card');
+    renderList();
+  }
+  function setSearch(v) { state.ui.q = v.trim(); renderList(); }
+  function setCat(v) { state.ui.cat = v; renderList(); }
+  function setStaff(v) { state.ui.staff = v; renderList(); }
+  function setSort(v) { state.ui.sort = v; renderList(); }
+  function setStatus(v) {
+    state.ui.status = v;
+    document.querySelectorAll('#statusChips .chip').forEach((c) => {
       c.classList.toggle('active', c.dataset.status === v);
     });
-    renderList(t);
+    renderList();
+  }
+
+  // ── เลือกหลายรายการ + บันทึกเร็ว ───────────────────────────────────────────
+  function toggleSelect(inv, on) {
+    if (on) state.selection.add(inv); else state.selection.delete(inv);
+    const row = document.querySelector('#assetTbody tr[data-inv="' + CSS.escape(inv) + '"]');
+    if (row) row.classList.toggle('row-selected', on);
+    updateBulkBar();
+  }
+  function selectAllFiltered(on) {
+    const list = filteredAssets();
+    list.forEach((a) => { if (on) state.selection.add(a.inventoryNumber); else state.selection.delete(a.inventoryNumber); });
+    renderList();
+  }
+  function clearSelection() {
+    state.selection.clear();
+    renderList();
+  }
+  function updateBulkBar() {
+    const n = state.selection.size;
+    el('bulkBarCount').textContent = n;
+    el('bulkBar').classList.toggle('hidden', n === 0 || !state.canWrite);
+  }
+  async function applySelection(resultKey) {
+    const invs = Array.from(state.selection);
+    if (!invs.length) return;
+    const rk = RESULTS[resultKey];
+    const already = invs.filter((i) => state.latest.get(i));
+    if (already.length) {
+      const ok = window.confirm('ในรายการที่เลือกมี ' + already.length + ' รายการที่ตรวจไปแล้ว\n' +
+        'ยืนยันบันทึกซ้ำเป็นรายการใหม่ต่อท้าย?');
+      if (!ok) return;
+    }
+    const location = el('bulkBarLocation').value.trim();
+    if (location) cacheSet('avLastLocation', location);
+    busy('กำลังบันทึก ' + invs.length + ' รายการ...');
+    let n = 0;
+    for (let i = 0; i < invs.length; i++) {
+      const asset = state.master.find((a) => a.inventoryNumber === invs[i]);
+      if (!asset) continue;
+      await queueRecord({
+        inventoryNumber: invs[i], assetType: asset.assetType,
+        resultKey: resultKey, method: 'MANUAL', locationText: location
+      });
+      n++;
+    }
+    state.selection.clear();
+    busyHide();
+    afterDataChange();
+    toast('บันทึก ' + n + ' รายการแล้ว (' + rk.label + ')', 'success');
+    flushQueue();
+  }
+  async function quickSave(inv, resultKey) {
+    const asset = state.master.find((a) => a.inventoryNumber === inv);
+    if (!asset) return;
+    const latest = state.latest.get(inv);
+    if (latest) {
+      const ok = window.confirm(inv + ' ตรวจแล้วโดย ' + (latest.inspector || '-') + '\n' +
+        thaiDT(latest.verifiedAt) + ' (ผล: ' + statusLabel(latest) + ')\n\nบันทึกซ้ำเป็นรายการใหม่?');
+      if (!ok) return;
+    }
+    await queueRecord({
+      inventoryNumber: inv, assetType: asset.assetType, resultKey: resultKey, method: 'MANUAL',
+      locationText: (el('bulkBarLocation').value || cacheGet('avLastLocation') || '').trim()
+    });
+    beep();
+    afterDataChange();
+    flushQueue();
+  }
+  /** สร้าง record ลงคิว (ทุกเส้นทางการบันทึกผ่านฟังก์ชันนี้) */
+  async function queueRecord(opts) {
+    const s = state.activeSession;
+    if (!s) throw new Error('ยังไม่ได้เลือกรอบตรวจ');
+    const rk = RESULTS[opts.resultKey];
+    const item = {
+      clientId: AssetStore.uuid(),
+      sessionId: s.sessionId,
+      site: s.site,
+      inventoryNumber: opts.inventoryNumber,
+      assetType: opts.assetType,
+      result: rk.result,
+      condition: rk.condition,
+      method: opts.method || 'MANUAL',
+      inspector: inspectorName(),
+      locationText: opts.locationText || '',
+      gpsLat: opts.gps ? opts.gps.lat : null,
+      gpsLng: opts.gps ? opts.gps.lng : null,
+      gpsAccuracy: opts.gps ? opts.gps.acc : null,
+      moveToSite: opts.moveToSite || null,
+      moveDocNo: opts.moveDocNo || null,
+      moveDate: opts.moveDate || null,
+      note: opts.note || '',
+      unregistered: Boolean(opts.unregistered),
+      unlistedDesc: opts.unlistedDesc || null,
+      verifiedAt: new Date().toISOString(),
+      photos: opts.photos || []
+    };
+    await qPut(item);
+    state.queueItems.push(item);
+    return item;
   }
 
   // ── นำทาง ──────────────────────────────────────────────────────────────────
-  function go(tab) {
-    state.activeTab = tab;
-    ['fixed', 'rental', 'dash', 'manage'].forEach((p) => {
-      const page = el('page-' + p);
-      if (page) page.classList.toggle('active', p === tab);
+  function go(page) {
+    if ((page === 'list' || page === 'dash') && !state.activeSession) {
+      toast('เลือกรอบตรวจก่อน', 'warn');
+      page = 'home';
+    }
+    state.page = page;
+    ['home', 'upload', 'list', 'dash', 'manage'].forEach((p) => {
+      const sec = el('page-' + p);
+      if (sec) sec.classList.toggle('active', p === page);
       const nav = el('nav-' + p);
-      if (nav) nav.classList.toggle('active', p === tab);
+      if (nav) nav.classList.toggle('active', p === page);
     });
-    if (tab === 'dash') renderDash();
-    if (tab === 'manage') renderManage();
+    el('backHome').classList.toggle('hidden', page === 'home');
+    const s = state.activeSession;
+    if ((page === 'list' || page === 'dash') && s) {
+      el('topKicker').textContent = 'โครงการที่กำลังตรวจ';
+      el('topTitle').textContent = s.site + (s.roundName ? ' · ' + s.roundName : '');
+    } else if (page === 'upload') {
+      el('topKicker').textContent = 'NEW ROUND';
+      el('topTitle').textContent = 'สร้างรอบตรวจใหม่';
+    } else {
+      el('topKicker').textContent = 'ASSET INSPECTION';
+      el('topTitle').textContent = 'ระบบตรวจนับทรัพย์สิน';
+    }
+    if (page === 'dash') renderDash();
+    if (page === 'manage') renderManage();
+    if (page === 'list') updateBulkBar(); else el('bulkBar').classList.add('hidden');
     window.scrollTo(0, 0);
   }
 
   // ── ฟอร์มบันทึกผลตรวจ ──────────────────────────────────────────────────────
-  function latestWarnHtml(latest) {
-    return '⚠ รายการนี้ถูกตรวจแล้วโดย <b>' + esc(latest.inspector || '-') + '</b> เมื่อ ' +
-      esc(thaiDT(latest.verifiedAt)) + ' (ผล: ' + esc(statusLabel(latest)) +
-      ') — การบันทึกซ้ำจะเพิ่มเป็นรายการใหม่ต่อท้าย ไม่ทับของเดิม';
-  }
   function renderHistory(inv) {
     const items = allLogs().filter((l) => l.inventoryNumber === inv)
       .sort((a, b) => String(b.verifiedAt).localeCompare(String(a.verifiedAt)));
@@ -595,8 +1145,8 @@ const App = (() => {
       const cls = classify(l);
       const photos = (l.photoPaths || []);
       html += '<div class="hist-row">' +
-        '<span class="status-badge st-' + cls + '">' + esc(statusLabel(l)) + '</span>' +
-        '<span class="method-badge ' + (l.method === 'SCAN' ? 'm-scan' : 'm-manual') + '">' + l.method + '</span>' +
+        '<span class="pill st-' + cls + '">' + esc(statusLabel(l)) + '</span>' +
+        '<span class="mbadge m-' + (l.method === 'SCAN' ? 'scan' : 'manual') + '">' + l.method + '</span>' +
         '<span>' + esc(thaiDT(l.verifiedAt)) + '</span>' +
         '<span>👤 ' + esc(l.inspector || '') + '</span>' +
         (l.locationText ? '<span>📌 ' + esc(l.locationText) + '</span>' : '') +
@@ -608,7 +1158,7 @@ const App = (() => {
         (l.pending ? '<span class="pending-sync">⏳ รอส่ง' +
           (l.photoCount ? ' (' + l.photoCount + ' รูป)' : '') + '</span>' : '') +
         (isAdmin && !l.pending
-          ? '<button type="button" class="hist-del" data-log="' + esc(l.logId) + '" title="ลบรายการนี้ (admin)">🗑</button>'
+          ? '<button type="button" class="hist-del" data-log="' + esc(l.logId) + '" title="ลบรายการนี้">🗑</button>'
           : '') +
         '</div>';
     });
@@ -640,7 +1190,11 @@ const App = (() => {
       '<b>' + esc(r[0]) + '</b><span>' + esc(r[1]) + '</span>').join('');
     const latest = state.latest.get(asset.inventoryNumber);
     el('recWarn').classList.toggle('hidden', !latest);
-    if (latest) el('recWarn').innerHTML = latestWarnHtml(latest);
+    if (latest) {
+      el('recWarn').innerHTML = '⚠ ตรวจแล้วโดย <b>' + esc(latest.inspector || '-') + '</b> เมื่อ ' +
+        esc(thaiDT(latest.verifiedAt)) + ' (ผล: ' + esc(statusLabel(latest)) +
+        ') — บันทึกซ้ำจะเพิ่มเป็นรายการใหม่ต่อท้าย ไม่ทับของเดิม';
+    }
     renderHistory(asset.inventoryNumber);
     resetRecForm();
     el('unlistedFields').classList.add('hidden');
@@ -650,6 +1204,7 @@ const App = (() => {
   }
   function openUnlisted(code, method) {
     if (!state.canWrite) return;
+    if (!state.activeSession) return toast('เลือกรอบตรวจก่อน', 'warn');
     state.rec = {
       mode: 'unlisted', asset: null, method: method || 'MANUAL',
       fromScanner: false, resultKey: null, photos: [], gps: null
@@ -658,7 +1213,7 @@ const App = (() => {
     const tb = el('recTypeBadge');
     tb.textContent = 'นอกทะเบียน';
     tb.className = 'type-badge t-unlisted';
-    el('recSub').textContent = 'บันทึกทรัพย์สินที่พบหน้างานแต่ไม่มีในไฟล์ทะเบียน';
+    el('recSub').textContent = 'ทรัพย์สินที่พบหน้างานแต่ไม่มีในทะเบียนรอบนี้';
     el('recInfo').innerHTML = '';
     el('recWarn').classList.add('hidden');
     el('recHistory').innerHTML = '';
@@ -676,8 +1231,7 @@ const App = (() => {
     el('movedFields').classList.add('hidden');
     el('moveSite').value = '';
     el('moveDoc').value = '';
-    const t = new Date();
-    el('moveDate').value = t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate());
+    el('moveDate').value = todayISO();
     el('recLocation').value = cacheGet('avLastLocation') || '';
     el('recNote').value = '';
     el('photoStrip').innerHTML = '';
@@ -750,7 +1304,7 @@ const App = (() => {
     busy('กำลังย่อรูป...');
     try {
       for (let i = 0; i < files.length; i++) {
-        const dataUrl = await resizeImage(files[i], 1280, 0.82);   // ~150-300KB เร็วบนเน็ตหน้างาน
+        const dataUrl = await resizeImage(files[i], 1280, 0.82);
         state.rec.photos.push({ dataUrl: dataUrl });
       }
       renderPhotoStrip();
@@ -801,39 +1355,27 @@ const App = (() => {
         '\n\nยืนยันบันทึกซ้ำเป็นรายการใหม่ต่อท้าย?');
       if (!okDup) return;
     }
-    const rk = RESULTS[rec.resultKey];
     const location = el('recLocation').value.trim();
     if (location) cacheSet('avLastLocation', location);
-    const item = {
-      clientId: AssetStore.uuid(),
-      inventoryNumber: inv,
-      assetType: assetType,
-      result: rk.result,
-      condition: rk.condition,
-      method: rec.method,
-      inspector: inspectorName(),
-      locationText: location,
-      gpsLat: rec.gps ? rec.gps.lat : null,
-      gpsLng: rec.gps ? rec.gps.lng : null,
-      gpsAccuracy: rec.gps ? rec.gps.acc : null,
-      moveToSite: rec.resultKey === 'MOVED' ? el('moveSite').value.trim().toUpperCase() : null,
-      moveDocNo: rec.resultKey === 'MOVED' ? el('moveDoc').value.trim() : null,
-      moveDate: rec.resultKey === 'MOVED' ? (el('moveDate').value || null) : null,
-      note: el('recNote').value.trim(),
-      unregistered: rec.mode === 'unlisted',
-      unlistedDesc: unlistedDesc,
-      verifiedAt: new Date().toISOString(),
-      photos: rec.photos
-    };
-    try { await qPut(item); } catch (e) {
+    try {
+      await queueRecord({
+        inventoryNumber: inv, assetType: assetType, resultKey: rec.resultKey,
+        method: rec.method, locationText: location, gps: rec.gps,
+        moveToSite: rec.resultKey === 'MOVED' ? el('moveSite').value.trim().toUpperCase() : null,
+        moveDocNo: rec.resultKey === 'MOVED' ? el('moveDoc').value.trim() : null,
+        moveDate: rec.resultKey === 'MOVED' ? (el('moveDate').value || null) : null,
+        note: el('recNote').value.trim(),
+        unregistered: rec.mode === 'unlisted',
+        unlistedDesc: unlistedDesc,
+        photos: rec.photos
+      });
+    } catch (e) {
       return toast('บันทึกลงเครื่องไม่ได้: ' + e.message, 'error');
     }
-    state.queueItems.push(item);
     afterDataChange();
     const fromScanner = rec.fromScanner;
     closeRecord();
-    toast(navigator.onLine
-      ? 'บันทึก ' + inv + ' แล้ว'
+    toast(navigator.onLine ? 'บันทึก ' + inv + ' แล้ว'
       : 'บันทึก ' + inv + ' แล้ว (ออฟไลน์ — รอส่ง)', 'success');
     flushQueue();
     if (fromScanner) resumeScan();
@@ -855,7 +1397,8 @@ const App = (() => {
       busy('กำลังลบ...');
       await AssetStore.deleteLog(logId);
       state.logs = state.logs.filter((l) => l.logId !== logId);
-      cacheSet('avLogs', state.logs);
+      state.logSummary = state.logSummary.filter((l) => l.logId !== logId);
+      if (state.activeSession) cacheSet('avLogs_' + state.activeSession.sessionId, state.logs);
       afterDataChange();
       if (state.rec && state.rec.asset) renderHistory(state.rec.asset.inventoryNumber);
       toast('ลบแล้ว', 'success');
@@ -867,6 +1410,7 @@ const App = (() => {
   function setScanStatus(text) { el('scanStatus').textContent = text; }
   async function openScanner() {
     if (!state.canWrite) return;
+    if (!state.activeSession) return toast('เลือกรอบตรวจก่อนเริ่มสแกน', 'warn');
     el('scannerModal').classList.remove('hidden');
     el('scanNotFound').classList.add('hidden');
     state.scan.active = true;
@@ -874,7 +1418,7 @@ const App = (() => {
     setScanStatus('กำลังเปิดกล้อง...');
     try {
       if (!window.isSecureContext) {
-        throw new Error('กล้องใช้ได้เฉพาะเมื่อเปิดผ่าน https (หลัง deploy ขึ้น Cloudflare)');
+        throw new Error('กล้องใช้ได้เฉพาะเมื่อเปิดผ่าน https');
       }
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('เบราว์เซอร์นี้ไม่รองรับกล้อง');
@@ -911,7 +1455,7 @@ const App = (() => {
       setScanStatus('กล้องพร้อม — เล็ง QR Code ในกรอบ');
     } catch (e) {
       setScanStatus(/denied|permission/i.test(e.message)
-        ? 'ไม่ได้รับอนุญาตใช้กล้อง — เปิดสิทธิ์กล้องใน Settings ของเบราว์เซอร์'
+        ? 'ไม่ได้รับอนุญาตใช้กล้อง — เปิดสิทธิ์กล้องในเบราว์เซอร์'
         : 'เปิดกล้องไม่ได้: ' + e.message);
     }
   }
@@ -930,13 +1474,13 @@ const App = (() => {
   function showScanNotFound() {
     el('nfCode').textContent = state.scan.lastCode;
     el('scanNotFound').classList.remove('hidden');
-    setScanStatus('ไม่พบในทะเบียน');
+    setScanStatus('ไม่พบในทะเบียนรอบนี้');
   }
   function resumeScan() {
     if (!state.scan.active) return;
     el('scanNotFound').classList.add('hidden');
     setScanStatus('กล้องพร้อม — เล็ง QR Code ในกรอบ');
-    setTimeout(() => { state.scan.paused = false; }, 700);   // กันสแกนรหัสเดิมซ้ำทันที
+    setTimeout(() => { state.scan.paused = false; }, 700);
   }
   function scanUnlisted() {
     const code = state.scan.lastCode;
@@ -956,17 +1500,16 @@ const App = (() => {
     el('scannerModal').classList.add('hidden');
   }
 
-  // ── โหมดตรวจต่อเนื่อง (Bulk) ───────────────────────────────────────────────
-  function openBulk(type) {
+  // ── โหมดตรวจต่อเนื่อง ──────────────────────────────────────────────────────
+  function openBulk() {
     if (!state.canWrite) return;
-    state.bulk.type = type;
+    if (!state.activeSession) return toast('เลือกรอบตรวจก่อน', 'warn');
     state.bulk.count = 0;
     const saved = cacheGet('avBulkResult');
     if (saved && RESULTS[saved] && saved !== 'MOVED') state.bulk.resultKey = saved;
-    el('bulkSub').textContent = type === 'RENTAL' ? 'ทรัพย์สินของเช่า' : 'ทรัพย์สิน Fixed Assets';
-    const t = type === 'RENTAL' ? 'R' : 'F';
+    el('bulkSub').textContent = state.ui.type === 'RENTAL' ? 'ทรัพย์สินของเช่า' : 'ทรัพย์สิน Fixed Assets';
     const counts = {};
-    mastersOf(t).forEach((a) => {
+    mastersOfType().forEach((a) => {
       const c = a.categoryCode || '?';
       counts[c] = (counts[c] || 0) + 1;
     });
@@ -974,7 +1517,7 @@ const App = (() => {
     if (!cats.length) return toast('ยังไม่มีทะเบียนของประเภทนี้', 'warn');
     el('bulkCat').innerHTML = cats.map((c) =>
       '<option value="' + esc(c) + '">RT-' + esc(c) + ' (' + counts[c] + ' รายการ)</option>').join('');
-    const savedCat = cacheGet('avBulkCat_' + type);
+    const savedCat = cacheGet('avBulkCat_' + state.ui.type);
     state.bulk.cat = cats.indexOf(savedCat) >= 0 ? savedCat : cats[0];
     el('bulkCat').value = state.bulk.cat;
     el('bulkLocation').value = cacheGet('avLastLocation') || '';
@@ -989,7 +1532,7 @@ const App = (() => {
   function setBulkCat(v) {
     state.bulk.cat = v;
     state.bulk.count = 0;
-    cacheSet('avBulkCat_' + state.bulk.type, v);
+    cacheSet('avBulkCat_' + state.ui.type, v);
     el('bulkTail').value = '';
     updateBulkView();
     el('bulkTail').focus();
@@ -1004,8 +1547,7 @@ const App = (() => {
   }
   function updateBulkView() {
     el('bulkPrefix').textContent = 'RT-' + state.bulk.cat + '-';
-    const list = state.master.filter((a) =>
-      a.assetType === state.bulk.type && a.categoryCode === state.bulk.cat);
+    const list = mastersOfType().filter((a) => a.categoryCode === state.bulk.cat);
     let done = 0;
     list.forEach((a) => {
       if (classify(state.latest.get(a.inventoryNumber)) !== 'pending') done++;
@@ -1017,7 +1559,7 @@ const App = (() => {
     let s = String(raw || '').toUpperCase().replace(/[–—]/g, '-').replace(/\s+/g, '');
     if (!s) return '';
     const full = s.match(INV_RE);
-    if (full) return full[0];   // ผู้ใช้วาง/สแกนรหัสเต็ม
+    if (full) return full[0];
     s = s.replace(/^-+/, '').replace(/-+$/, '');
     const m = s.match(/^([A-Z0-9]{2})-?(\d{1,4})$/);
     if (!m) return '';
@@ -1026,12 +1568,10 @@ const App = (() => {
   async function bulkSubmit() {
     const tailEl = el('bulkTail');
     const code = bulkCodeFromTail(tailEl.value);
-    if (!code) {
-      return toast('รูปแบบไม่ถูกต้อง — กรอกส่วนท้าย เช่น 26-0001 หรือ 260001', 'warn');
-    }
+    if (!code) return toast('รูปแบบไม่ถูกต้อง — กรอกส่วนท้าย เช่น 26-0001 หรือ 260001', 'warn');
     const asset = state.master.find((a) => a.inventoryNumber === code);
     if (!asset) {
-      return toast('ไม่พบ ' + code + ' ในทะเบียน — ตรวจเลขอีกครั้ง หรือใช้ปุ่ม "นอกทะเบียน"', 'error');
+      return toast('ไม่พบ ' + code + ' ในทะเบียนรอบนี้ — ตรวจเลขอีกครั้ง หรือใช้ "นอกทะเบียน"', 'error');
     }
     const latest = state.latest.get(code);
     if (latest) {
@@ -1040,32 +1580,21 @@ const App = (() => {
         ')\n\nยืนยันบันทึกซ้ำเป็นรายการใหม่?');
       if (!ok) { tailEl.value = ''; tailEl.focus(); return; }
     }
-    const rk = RESULTS[state.bulk.resultKey];
     const location = el('bulkLocation').value.trim();
     if (location) cacheSet('avLastLocation', location);
-    const item = {
-      clientId: AssetStore.uuid(),
-      inventoryNumber: code,
-      assetType: asset.assetType,
-      result: rk.result,
-      condition: rk.condition,
-      method: 'MANUAL',
-      inspector: inspectorName(),
-      locationText: location,
-      gpsLat: null, gpsLng: null, gpsAccuracy: null,
-      moveToSite: null, moveDocNo: null, moveDate: null,
-      note: '', unregistered: false, unlistedDesc: null,
-      verifiedAt: new Date().toISOString(),
-      photos: []
-    };
-    try { await qPut(item); } catch (e) {
+    try {
+      await queueRecord({
+        inventoryNumber: code, assetType: asset.assetType,
+        resultKey: state.bulk.resultKey, method: 'MANUAL', locationText: location
+      });
+    } catch (e) {
       return toast('บันทึกลงเครื่องไม่ได้: ' + e.message, 'error');
     }
-    state.queueItems.push(item);
     state.bulk.count++;
     afterDataChange();
     updateBulkView();
-    el('bulkLast').textContent = '✔ ล่าสุด: ' + code + ' (' + rk.label + ') ' + thaiDT(item.verifiedAt);
+    el('bulkLast').textContent = '✔ ล่าสุด: ' + code + ' (' + RESULTS[state.bulk.resultKey].label +
+      ') ' + thaiDT(new Date().toISOString());
     beep();
     tailEl.value = '';
     tailEl.focus();
@@ -1076,7 +1605,7 @@ const App = (() => {
     updateSyncChip();
   }
 
-  // ── Dashboard + Export ─────────────────────────────────────────────────────
+  // ── Dashboard ──────────────────────────────────────────────────────────────
   function typeStats(type) {
     const list = state.master.filter((a) => a.assetType === type);
     const st = { total: list.length, pending: 0, found: 0, damaged: 0, notfound: 0, moved: 0 };
@@ -1089,13 +1618,13 @@ const App = (() => {
     return '<div class="dash-card"><h4>' + title + '</h4>' +
       '<div class="progress-line"><span>ตรวจแล้ว ' + st.done + ' / ' + st.total +
       '</span><span>' + pct + '%</span></div>' +
-      '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
+      '<div class="bar"><i class="' + (pct >= 100 ? 'ok' : '') + '" style="width:' + pct + '%"></i></div>' +
       '<div class="stat-chips">' +
-      '<span class="stat-chip status-badge st-found">พบปกติ ' + st.found + '</span>' +
-      '<span class="stat-chip status-badge st-damaged">ชำรุด ' + st.damaged + '</span>' +
-      '<span class="stat-chip status-badge st-notfound">ไม่พบ ' + st.notfound + '</span>' +
-      '<span class="stat-chip status-badge st-moved">ย้ายออก ' + st.moved + '</span>' +
-      '<span class="stat-chip status-badge st-pending">ยังไม่ตรวจ ' + st.pending + '</span>' +
+      '<span class="stat-chip st-found">พบปกติ ' + st.found + '</span>' +
+      '<span class="stat-chip st-damaged">ชำรุด ' + st.damaged + '</span>' +
+      '<span class="stat-chip st-notfound">ไม่พบ ' + st.notfound + '</span>' +
+      '<span class="stat-chip st-moved">ย้ายออก ' + st.moved + '</span>' +
+      '<span class="stat-chip st-pending">ยังไม่ตรวจ ' + st.pending + '</span>' +
       '</div></div>';
   }
   function groupBars(list, keyFn) {
@@ -1106,15 +1635,16 @@ const App = (() => {
       groups[k].total++;
       if (classify(state.latest.get(a.inventoryNumber)) !== 'pending') groups[k].done++;
     });
-    return Object.keys(groups)
-      .sort((a, b) => (groups[b].total - groups[b].done) - (groups[a].total - groups[a].done))
-      .map((k) => {
-        const g = groups[k];
-        const pct = g.total ? Math.round(g.done * 100 / g.total) : 0;
-        return '<div class="mini-bar-row"><span>' + esc(k) + '</span>' +
-          '<div class="bar"><i class="' + (pct === 100 ? '' : 'warn') + '" style="width:' + pct +
-          '%"></i></div><span>' + g.done + '/' + g.total + '</span></div>';
-      }).join('');
+    const keys = Object.keys(groups)
+      .sort((a, b) => (groups[b].total - groups[b].done) - (groups[a].total - groups[a].done));
+    if (!keys.length) return '<p class="hint">ไม่มีข้อมูล</p>';
+    return keys.map((k) => {
+      const g = groups[k];
+      const pct = g.total ? Math.round(g.done * 100 / g.total) : 0;
+      return '<div class="mini-bar-row"><span>' + esc(k) + '</span>' +
+        '<div class="bar"><i class="' + (pct === 100 ? 'ok' : '') + '" style="width:' + pct +
+        '%"></i></div><span>' + g.done + '/' + g.total + '</span></div>';
+    }).join('');
   }
   function dashList(id, title, rows) {
     if (!rows.length) return '';
@@ -1123,11 +1653,13 @@ const App = (() => {
       '<div id="coll-' + id + '" class="collapse-body hidden">' + rows.join('') + '</div>';
   }
   function renderDash() {
+    const s = state.activeSession;
+    if (!s) { el('dashContent').innerHTML = '<p class="empty-note">เลือกรอบตรวจก่อน</p>'; return; }
+    el('dashTitle').textContent = 'สรุปผล: ' + s.site + (s.roundName ? ' · ' + s.roundName : '');
     const fx = typeStats('FIXED');
     const rn = typeStats('RENTAL');
     const fixedList = state.master.filter((a) => a.assetType === 'FIXED');
     const rentalList = state.master.filter((a) => a.assetType === 'RENTAL');
-    // ผลงานผู้ตรวจ
     const byInspector = {};
     allLogs().forEach((l) => {
       const k = l.inspector || '(ไม่ระบุ)';
@@ -1137,7 +1669,6 @@ const App = (() => {
       .sort((a, b) => byInspector[b] - byInspector[a])
       .map((k) => '<div class="dash-list-item"><span>👤 ' + esc(k) + '</span><b>' +
         byInspector[k] + ' ครั้ง</b></div>');
-    // รายการค้าง / มีปัญหา
     const pendingRow = (a) => '<div class="dash-list-item" data-inv="' + esc(a.inventoryNumber) +
       '"><span class="mono">' + esc(a.inventoryNumber) + '</span><span>' +
       esc(a.description || '') + '</span></div>';
@@ -1148,11 +1679,13 @@ const App = (() => {
     const pendR = rentalList.filter((a) => classify(state.latest.get(a.inventoryNumber)) === 'pending');
     const notFound = [];
     const moved = [];
+    const damaged = [];
     state.master.forEach((a) => {
       const l = state.latest.get(a.inventoryNumber);
       const c = classify(l);
       if (c === 'notfound') notFound.push(issueRow(a, l));
       if (c === 'moved') moved.push(issueRow(a, l));
+      if (c === 'damaged') damaged.push(issueRow(a, l));
     });
     const unl = allLogs().filter((l) => l.unregistered)
       .sort((a, b) => String(b.verifiedAt).localeCompare(String(a.verifiedAt)))
@@ -1175,15 +1708,20 @@ const App = (() => {
       '</div>' +
       dashList('pf', '⬜ ยังไม่ตรวจ — Fixed Assets', pendF.map(pendingRow)) +
       dashList('pr', '⬜ ยังไม่ตรวจ — ของเช่า', pendR.map(pendingRow)) +
+      dashList('dm', '🛠 ชำรุด', damaged) +
       dashList('nf', '❌ ไม่พบ', notFound) +
       dashList('mv', '🚚 ย้ายออกไปไซต์อื่น', moved) +
-      dashList('un', '➕ ทรัพย์สินนอกทะเบียน', unl);
+      dashList('un', '＋ ทรัพย์สินนอกทะเบียน', unl);
   }
   function toggleSection(id) {
     const b = el('coll-' + id);
     if (b) b.classList.toggle('hidden');
   }
+
+  // ── Export Excel ───────────────────────────────────────────────────────────
   async function exportExcel() {
+    const s = state.activeSession;
+    if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
     try {
       busy('กำลังสร้างไฟล์ Excel...');
       await ensureLibrary('xlsx');
@@ -1194,20 +1732,22 @@ const App = (() => {
         return [
           l ? statusLabel(l) : 'ยังไม่ตรวจ',
           l && l.condition === 'DAMAGED' ? 'ชำรุด' : (l && l.result === 'FOUND' ? 'ปกติ' : ''),
-          l ? (l.inspector || '') : '',
-          l ? thaiDT(l.verifiedAt) : '',
-          l ? l.method : '',
-          l ? (l.locationText || '') : '',
-          l ? (l.moveToSite || '') : '',
-          l ? (l.moveDocNo || '') : '',
-          l && l.moveDate ? thaiD(l.moveDate) : '',
-          gps,
-          l ? (l.note || '') : '',
+          l ? (l.inspector || '') : '', l ? thaiDT(l.verifiedAt) : '', l ? l.method : '',
+          l ? (l.locationText || '') : '', l ? (l.moveToSite || '') : '',
+          l ? (l.moveDocNo || '') : '', l && l.moveDate ? thaiD(l.moveDate) : '',
+          gps, l ? (l.note || '') : '',
           l ? ((l.photoPaths || []).length || l.photoCount || 0) : 0
         ];
       };
       const tail = ['สถานะ', 'สภาพ', 'ผู้ตรวจ', 'เวลาตรวจ', 'วิธี', 'ตำแหน่ง',
         'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', 'GPS', 'หมายเหตุ', 'จำนวนรูป'];
+      const info = [
+        ['รายงานผลการตรวจนับทรัพย์สิน'],
+        ['โครงการ', s.site], ['ชื่อรอบ', s.roundName || ''], ['Cost center', s.costCenter || ''],
+        ['วันที่ตรวจ', thaiD(s.countDateFrom) + (s.countDateTo ? ' – ' + thaiD(s.countDateTo) : '')],
+        ['ผู้รับผิดชอบ', s.inspectorName || ''], ['หมายเหตุ', s.note || ''],
+        ['ออกรายงานเมื่อ', thaiDT(new Date().toISOString())], ['ออกโดย', inspectorName()]
+      ];
       const fixedRows = [['Inventory Number', 'Description', 'Asset Class', 'Asset Number',
         'Sub Numb', 'Serial Number', 'Staff – Text', 'Current Site'].concat(tail)];
       state.master.filter((a) => a.assetType === 'FIXED').forEach((a) => {
@@ -1236,12 +1776,13 @@ const App = (() => {
             l.pending ? 'รอส่ง' : 'ส่งแล้ว']);
         });
       const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(info), 'ข้อมูลรอบตรวจ');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(fixedRows), 'Fixed Assets');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rentalRows), 'ของเช่า');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(logRows), 'ประวัติการตรวจทั้งหมด');
-      const d = new Date();
-      XLSX.writeFile(wb, 'Asset_Verify_' + SITE + '_' + d.getDate() + '.' + (d.getMonth() + 1) +
-        '.' + String(d.getFullYear()).slice(-2) + '.xlsx');
+      const d = s.countDateFrom ? new Date(s.countDateFrom + 'T00:00:00') : new Date();
+      XLSX.writeFile(wb, 'Asset_' + s.site + '_' + d.getDate() + '.' + (d.getMonth() + 1) +
+        '.' + String(d.getFullYear() + 543).slice(-2) + '.xlsx');
     } catch (e) {
       toast('Export ไม่สำเร็จ: ' + e.message, 'error');
     } finally {
@@ -1249,127 +1790,7 @@ const App = (() => {
     }
   }
 
-  // ── นำเข้าทะเบียน (อ่าน .xls จริงด้วย SheetJS ฝั่งเบราว์เซอร์) ────────────────
-  const normHead = (v) => String(v || '').replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim().toUpperCase();
-  function parseSheet(ws) {
-    const XLSX = window.XLSX;
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
-    let hr = -1, invCol = -1;
-    for (let r = 0; r < Math.min(rows.length, 20); r++) {
-      const c = (rows[r] || []).findIndex((v) => normHead(v) === 'INVENTORY NUMBER');
-      if (c >= 0) { hr = r; invCol = c; break; }
-    }
-    if (hr < 0) return null;
-    const width = Math.max((rows[hr] || []).length, (rows[hr + 1] || []).length);
-    const labels = [];
-    for (let c = 0; c < width; c++) {
-      labels[c] = normHead((rows[hr] || [])[c]) || normHead((rows[hr + 1] || [])[c]) || '';
-    }
-    const col = (names) => {
-      for (let i = 0; i < names.length; i++) {
-        const idx = labels.indexOf(names[i]);
-        if (idx >= 0) return idx;
-      }
-      return -1;
-    };
-    const cell = (row, idx) => (idx >= 0 ? String(row[idx] == null ? '' : row[idx]).trim() : '');
-    const isRental = col(['MATERIAL']) >= 0;
-    const cols = isRental
-      ? { material: col(['MATERIAL']), desc: col(['DESCRIPTION']),
-          plant: col(['PLAN', 'PLANT']), sloc: col(['SLOC']) }
-      : { assetClass: col(['ASSET CLASS']), assetNumber: col(['ASSET NUMBER']),
-          subNumber: col(['SUB NUMB', 'SUB NUMBER']), desc: col(['DESCRIPTION']),
-          serial: col(['SERIAL NUMBER']), staff: col(['STAFF - TEXT', 'STAFF-TEXT', 'STAFF TEXT']),
-          site: col(['CURRENT SITE']) };
-    const items = [];
-    for (let r = hr + 1; r < rows.length; r++) {
-      const row = rows[r] || [];
-      const inv = normalizeCode(row[invCol]);
-      if (!inv) continue;
-      const item = {
-        inventoryNumber: inv,
-        assetType: isRental ? 'RENTAL' : 'FIXED',
-        categoryCode: inv.split('-')[1] || '',
-        description: cell(row, cols.desc)
-      };
-      if (isRental) {
-        item.materialCode = cell(row, cols.material);
-        item.plant = cell(row, cols.plant);
-        item.sloc = cell(row, cols.sloc);
-      } else {
-        item.assetClass = cell(row, cols.assetClass);
-        item.assetNumber = cell(row, cols.assetNumber);
-        item.subNumber = cell(row, cols.subNumber);
-        item.serialNumber = cell(row, cols.serial);
-        item.staffText = cell(row, cols.staff);
-        item.currentSite = cell(row, cols.site);
-      }
-      items.push(item);
-    }
-    return { type: isRental ? 'RENTAL' : 'FIXED', items: items };
-  }
-  async function importMasterFile(event) {
-    const file = event.target.files && event.target.files[0];
-    event.target.value = '';
-    if (!file) return;
-    try {
-      busy('กำลังอ่านไฟล์...');
-      await ensureLibrary('xlsx');
-      const buf = await file.arrayBuffer();
-      const wb = window.XLSX.read(buf, { type: 'array' });
-      const byInv = new Map();
-      let fixed = 0, rental = 0, dups = 0;
-      wb.SheetNames.forEach((name) => {
-        const parsed = parseSheet(wb.Sheets[name]);
-        if (!parsed) return;
-        parsed.items.forEach((it) => {
-          if (byInv.has(it.inventoryNumber)) dups++;
-          byInv.set(it.inventoryNumber, it);
-        });
-      });
-      const rows = Array.from(byInv.values());
-      rows.forEach((it) => { if (it.assetType === 'RENTAL') rental++; else fixed++; });
-      if (!rows.length) {
-        throw new Error('ไม่พบข้อมูลทรัพย์สินในไฟล์ — ต้องมีหัวคอลัมน์ "Inventory Number"');
-      }
-      state.importData = rows;
-      el('importPreview').innerHTML =
-        'ไฟล์: <b>' + esc(file.name) + '</b><br>' +
-        'ทรัพย์สิน Fixed Assets: <b>' + fixed + '</b> รายการ · ของเช่า: <b>' + rental +
-        '</b> รายการ · รวม <b>' + rows.length + '</b> รายการ' +
-        (dups ? '<br>⚠ พบรหัสซ้ำในไฟล์ ' + dups + ' รายการ (ใช้แถวล่าสุด)' : '') +
-        '<br><br>⚠ การนำเข้าจะ<b>แทนที่ทะเบียนเดิมทั้งชุด</b>ของ ' + esc(SITE) +
-        ' (ประวัติผลตรวจไม่หาย)';
-      el('importPreview').classList.remove('hidden');
-      el('importActions').classList.remove('hidden');
-    } catch (e) {
-      toast(e.message, 'error');
-    } finally {
-      busyHide();
-    }
-  }
-  function cancelImport() {
-    state.importData = null;
-    el('importPreview').classList.add('hidden');
-    el('importActions').classList.add('hidden');
-  }
-  async function confirmImport() {
-    if (!state.importData) return;
-    try {
-      busy('กำลังนำเข้าทะเบียน ' + state.importData.length + ' รายการ...');
-      const res = await AssetStore.importMaster(state.importData, inspectorName());
-      cancelImport();
-      toast('นำเข้าแล้ว ' + res.inserted + ' รายการ', 'success');
-      await refreshAll(true);
-      renderManage();
-    } catch (e) {
-      toast('นำเข้าไม่สำเร็จ: ' + e.message, 'error');
-    } finally {
-      busyHide();
-    }
-  }
-
-  // ── จัดการบัญชี + ข้อมูลระบบ ────────────────────────────────────────────────
+  // ── จัดการบัญชี ────────────────────────────────────────────────────────────
   async function loadUsers(silent) {
     if (!state.profile || state.profile.role !== 'admin') return;
     try {
@@ -1377,7 +1798,7 @@ const App = (() => {
       const pending = state.users.filter((u) => !u.active).length;
       el('pendingBadge').textContent = pending;
       el('pendingBadge').classList.toggle('hidden', !pending);
-      if (!silent || state.activeTab === 'manage') renderUsers();
+      if (!silent || state.page === 'manage') renderUsers();
     } catch (e) {
       if (!silent) toast(e.message, 'error');
     }
@@ -1390,7 +1811,7 @@ const App = (() => {
         '<div class="user-main"><b>' + esc(u.fullName || u.email || '') + '</b>' +
         '<small>' + esc(u.email || '') + (u.active ? '' : ' · ⏳ รออนุมัติ') + '</small></div>' +
         '<input type="text" placeholder="ชื่อที่แสดง" value="' + esc(u.fullName || '') +
-        '" style="width:120px" onchange="App.setUserField(\'' + u.id + '\',\'fullName\',this.value)">' +
+        '" onchange="App.setUserField(\'' + u.id + '\',\'fullName\',this.value)">' +
         '<select ' + (self ? 'disabled' : '') +
         ' onchange="App.setUserField(\'' + u.id + '\',\'role\',this.value)">' +
         ['viewer', 'counter', 'admin'].map((r) =>
@@ -1416,29 +1837,57 @@ const App = (() => {
   }
   function renderManage() {
     loadUsers(true);
-    const fx = state.master.filter((a) => a.assetType === 'FIXED').length;
-    const rn = state.master.filter((a) => a.assetType === 'RENTAL').length;
+    const totalAssets = state.sessions.reduce((n, s) => n + (s.assetCount || 0), 0);
     el('sysInfo').innerHTML =
-      '<span>เวอร์ชัน: ' + APP_VERSION + ' · โครงการ: ' + esc(SITE) + '</span>' +
-      '<span>ทะเบียน: Fixed ' + fx + ' + ของเช่า ' + rn + ' = ' + state.master.length + ' รายการ</span>' +
-      '<span>บันทึกผลตรวจ: ' + state.logs.length + ' รายการ · รอส่ง: ' + state.queueItems.length + '</span>' +
-      '<span><button class="outline-button" type="button" onclick="App.clearLocalCache()" ' +
-      'style="padding:8px 12px;margin-top:6px">ล้าง cache เครื่องนี้ (ไม่ลบคิวรอส่ง)</button></span>';
+      '<span>เวอร์ชัน: ' + APP_VERSION + '</span>' +
+      '<span>รอบตรวจทั้งหมด: ' + state.sessions.length + ' รอบ · ทรัพย์สินรวม ' + totalAssets + ' รายการ</span>' +
+      '<span>ผลตรวจทั้งระบบ: ' + state.logSummary.length + ' รายการ · รอส่งในเครื่องนี้: ' +
+        state.queueItems.length + '</span>' +
+      '<span><button class="outline-button" type="button" onclick="App.clearLocalCache()">ล้าง cache เครื่องนี้ (ไม่ลบคิวรอส่ง)</button></span>';
   }
   function clearLocalCache() {
-    ['avMaster', 'avLogs', 'avProfile'].forEach((k) => {
-      try { localStorage.removeItem(k); } catch (e) {}
-    });
+    try {
+      Object.keys(localStorage).forEach((k) => {
+        if (/^av(Master_|Logs_|Sessions|LogSummary|Profile)/.test(k)) localStorage.removeItem(k);
+      });
+    } catch (e) {}
     location.reload();
   }
 
   // ── init ───────────────────────────────────────────────────────────────────
   function init() {
-    ['listF', 'listR'].forEach((id) => {
-      el(id).addEventListener('click', (ev) => {
-        const row = ev.target.closest('.asset-row');
-        if (row) openAsset(row.dataset.inv);
-      });
+    el('sessionList').addEventListener('click', (ev) => {
+      const card = ev.target.closest('.session-card');
+      if (!card) return;
+      const id = card.dataset.id;
+      const btn = ev.target.closest('button[data-act]');
+      const act = btn ? btn.dataset.act : 'open';
+      if (act === 'del') return deleteSession(id);
+      openSession(id, act === 'dash' ? 'dash' : 'list');
+    });
+    el('assetTbody').addEventListener('click', (ev) => {
+      if (ev.target.closest('.row-check')) return;
+      const row = ev.target.closest('tr[data-inv]');
+      if (!row) return;
+      const inv = row.dataset.inv;
+      const btn = ev.target.closest('.qbtn');
+      if (btn) {
+        const act = btn.dataset.act;
+        if (act === 'open') return openAsset(inv);
+        return quickSave(inv, act);
+      }
+      openAsset(inv);
+    });
+    el('assetTbody').addEventListener('change', (ev) => {
+      const cb = ev.target.closest('.row-check');
+      if (cb) toggleSelect(cb.dataset.inv, cb.checked);
+    });
+    el('assetThead').addEventListener('change', (ev) => {
+      if (ev.target.id === 'checkAll') selectAllFiltered(ev.target.checked);
+    });
+    el('cardWrap').addEventListener('click', (ev) => {
+      const row = ev.target.closest('.asset-row');
+      if (row) openAsset(row.dataset.inv);
     });
     el('dashContent').addEventListener('click', (ev) => {
       const coll = ev.target.closest('.collapse-head');
@@ -1458,9 +1907,11 @@ const App = (() => {
       if (!document.hidden && state.profile) { flushQueue(); refreshAll(true); }
     });
     setInterval(() => { if (state.profile) flushQueue(); }, 25000);
-    setInterval(() => {           // เผื่อ Realtime หลุด — sync สำรองทุก 2 นาที
+    setInterval(() => {
       if (state.profile && navigator.onLine && !document.hidden) refreshAll(true);
     }, 120000);
+    const savedView = cacheGet('avView');
+    if (savedView === 'card' || savedView === 'table') setView(savedView);
     boot();
   }
   document.addEventListener('DOMContentLoaded', init);
@@ -1468,13 +1919,15 @@ const App = (() => {
   return {
     setAuthMode, submitAuth, logout,
     go, refreshAll, flushQueueNow,
-    setSearch, setCat, setStaff, setSort, setStatus,
+    setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession,
+    readMasterFile, confirmImport, cancelImport,
+    setType, setView, setSearch, setCat, setStaff, setSort, setStatus,
+    clearSelection, applySelection, quickSave,
     openAsset, closeRecord, chooseResult, saveRecord,
     addPhotos, removePhoto, viewPhoto, deleteLogEntry,
     openScanner, closeScanner, resumeScan, scanUnlisted,
     openBulk, closeBulk, setBulkCat, setBulkResult, bulkSubmit,
     openUnlisted, exportExcel, toggleSection,
-    importMasterFile, confirmImport, cancelImport,
     setUserField, clearLocalCache
   };
 })();

@@ -6,6 +6,8 @@
  *   1) supabase-js v2 UMD  → window.supabase
  *   2) config.js           → window.ASSET_CONFIG
  *
+ * โครงข้อมูล: asset_sessions (รอบตรวจ) → asset_master (ทะเบียนของรอบนั้น)
+ *              → asset_verify_log (ผลตรวจ append-only)
  * การ map ชื่อ: DB เป็น snake_case ↔ แอปใช้ camelCase (แปลงอัตโนมัติ)
  */
 const AssetStore = (function () {
@@ -28,7 +30,6 @@ const AssetStore = (function () {
     return client;
   }
   function BUCKET() { return cfg().STORAGE_BUCKET || 'asset-files'; }
-  function SITE() { return cfg().SITE || 'BRH3'; }
 
   // ── snake_case ↔ camelCase ─────────────────────────────────────────────────
   const toCamel = (s) => String(s).replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
@@ -72,7 +73,6 @@ const AssetStore = (function () {
   async function signUp(email, password) {
     const { data, error } = await getClient().auth.signUp({ email, password });
     fail(error);
-    // fallback: ถ้า DB trigger ไม่ทำงาน + ได้ session แล้ว สร้าง profile เอง (รออนุมัติ)
     if (data && data.session && data.user) {
       try {
         await getClient().from('profiles').upsert(
@@ -116,12 +116,14 @@ const AssetStore = (function () {
   }
 
   // ── ดึงข้อมูลทั้งตาราง (เกิน 1000 แถวก็ครบ — วนทีละหน้า) ─────────────────────
-  async function fetchAll(table, orderCol, ascending) {
+  async function fetchPaged(table, cols, orderCol, ascending, filter) {
     const page = 1000;
     let from = 0;
     let all = [];
     for (;;) {
-      const { data, error } = await getClient().from(table).select('*')
+      let q = getClient().from(table).select(cols || '*');
+      if (filter) q = filter(q);
+      const { data, error } = await q
         .order(orderCol, { ascending: ascending !== false })
         .range(from, from + page - 1);
       fail(error);
@@ -132,49 +134,76 @@ const AssetStore = (function () {
     return rowsToObjs(all);
   }
 
-  // ── Master ─────────────────────────────────────────────────────────────────
-  async function loadMaster() {
-    return fetchAll('asset_master', 'inventory_number', true);
+  // ── รอบการตรวจนับ ──────────────────────────────────────────────────────────
+  async function listSessions() {
+    return fetchPaged('asset_sessions', '*', 'created_at', false);
   }
-  /**
-   * นำเข้าทะเบียนใหม่: ลบของ site เดิมทั้งหมดแล้วใส่ชุดใหม่ (ทำเป็น 2 จังหวะ
-   * เพราะไม่มี transaction ฝั่ง client — เรียกเฉพาะตอน admin ยืนยันแล้ว)
-   * rows = [{inventoryNumber, assetType, ...}] (camelCase)
-   */
-  async function importMaster(rows, importedBy) {
+  async function createSession(payload) {
+    const row = objToRow(payload);
+    const { data, error } = await getClient().from('asset_sessions')
+      .insert(row).select().maybeSingle();
+    if (error) {
+      if (/relation .*asset_sessions.* does not exist|schema cache/i.test(error.message || '')) {
+        throw new Error('ยังไม่ได้ติดตั้งระบบรอบตรวจ — รันไฟล์ asset-rounds.sql ใน Supabase SQL Editor ก่อน');
+      }
+      throw new Error(error.message);
+    }
+    return rowToObj(data);
+  }
+  async function updateSession(sessionId, patch) {
+    const { data, error } = await getClient().from('asset_sessions')
+      .update(objToRow(patch)).eq('session_id', sessionId).select().maybeSingle();
+    fail(error);
+    return rowToObj(data);
+  }
+  async function deleteSession(sessionId) {
+    // FK เป็น on delete cascade → ทะเบียนและผลตรวจของรอบนี้ถูกลบตามอัตโนมัติ
+    const { error } = await getClient().from('asset_sessions')
+      .delete().eq('session_id', sessionId);
+    fail(error);
+    return { success: true };
+  }
+
+  // ── ทะเบียนทรัพย์สินของรอบ ─────────────────────────────────────────────────
+  async function loadMaster(sessionId) {
+    if (!sessionId) return [];
+    return fetchPaged('asset_master', '*', 'inventory_number', true,
+      (q) => q.eq('session_id', sessionId));
+  }
+  /** นำเข้าทะเบียนของรอบใหม่ (rows = camelCase) */
+  async function importAssets(sessionId, rows, importedBy) {
+    if (!sessionId) throw new Error('ไม่พบรอบตรวจ');
     if (!rows || !rows.length) throw new Error('ไม่มีข้อมูลให้นำเข้า');
-    const site = SITE();
-    const { error: delError } = await getClient().from('asset_master')
-      .delete().eq('site', site);
-    fail(delError);
     const chunk = 400;
     let inserted = 0;
     for (let i = 0; i < rows.length; i += chunk) {
       const part = rows.slice(i, i + chunk).map((r) => {
         const row = objToRow(r);
-        row.site = site;
+        row.session_id = sessionId;
         row.imported_by = importedBy || '';
         return row;
       });
-      const { error } = await getClient().from('asset_master')
-        .upsert(part, { onConflict: 'inventory_number' });
+      const { error } = await getClient().from('asset_master').insert(part);
       fail(error);
       inserted += part.length;
     }
     return { inserted };
   }
 
-  // ── Verify log (append-only) ───────────────────────────────────────────────
-  async function loadLogs() {
-    return fetchAll('asset_verify_log', 'verified_at', true);
+  // ── ผลตรวจ (append-only) ───────────────────────────────────────────────────
+  async function loadLogs(sessionId) {
+    if (!sessionId) return [];
+    return fetchPaged('asset_verify_log', '*', 'verified_at', true,
+      (q) => q.eq('session_id', sessionId));
   }
-  /**
-   * บันทึกผลตรวจ 1 รายการ — idempotent ด้วย client_id:
-   * ถ้าเคยบันทึกสำเร็จแล้ว (retry จากคิว offline) จะได้ duplicate → ถือว่าสำเร็จ
-   */
+  /** โหลดผลตรวจแบบย่อของทุกรอบ (ใช้คำนวณความคืบหน้าในหน้าแรก) */
+  async function loadLogsSummary() {
+    return fetchPaged('asset_verify_log',
+      'log_id, session_id, inventory_number, result, condition, verified_at, inspector, unregistered',
+      'verified_at', true);
+  }
   async function saveVerify(rec) {
     const row = objToRow(rec);
-    row.site = row.site || SITE();
     const { data, error } = await getClient().from('asset_verify_log')
       .insert(row).select().maybeSingle();
     if (error) {
@@ -191,14 +220,18 @@ const AssetStore = (function () {
     fail(error);
     return { success: true };
   }
-  /** สมัครรับผลตรวจใหม่จากเครื่องอื่นแบบสด (Realtime) */
-  function subscribeLogs(onInsert, onStatus) {
-    const ch = getClient().channel('asset-verify-live')
+  /** รับผลตรวจใหม่จากเครื่องอื่นแบบสด เฉพาะรอบที่กำลังเปิดอยู่ */
+  function subscribeLogs(sessionId, onInsert, onStatus) {
+    const ch = getClient().channel('asset-verify-' + (sessionId || 'all'))
       .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'asset_verify_log' },
+        { event: 'INSERT', schema: 'public', table: 'asset_verify_log',
+          filter: sessionId ? 'session_id=eq.' + sessionId : undefined },
         (payload) => { try { onInsert(rowToObj(payload.new)); } catch (e) {} })
       .subscribe((status) => { if (onStatus) onStatus(status); });
     return ch;
+  }
+  function unsubscribe(ch) {
+    try { if (ch) getClient().removeChannel(ch); } catch (e) {}
   }
 
   // ── รูปถ่าย (Storage) ──────────────────────────────────────────────────────
@@ -209,9 +242,9 @@ const AssetStore = (function () {
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return new Blob([bytes], { type: mime || 'image/jpeg' });
   }
-  async function uploadPhoto(dataUrl, inventoryNumber) {
+  async function uploadPhoto(dataUrl, sessionId, inventoryNumber) {
     const safe = String(inventoryNumber || 'ASSET').replace(/[^\w-]/g, '_');
-    const path = SITE() + '/' + safe + '/' + Date.now() + '_' +
+    const path = (sessionId || 'no-session') + '/' + safe + '/' + Date.now() + '_' +
       Math.random().toString(36).slice(2, 8) + '.jpg';
     const { error } = await getClient().storage.from(BUCKET())
       .upload(path, base64ToBlob(dataUrl, 'image/jpeg'),
@@ -234,8 +267,9 @@ const AssetStore = (function () {
     getClient, uuid,
     signIn, signOut, signUp, getSession, currentUser, getMyProfile,
     sendPasswordReset, listProfiles, updateProfile,
-    loadMaster, importMaster,
-    loadLogs, saveVerify, deleteLog, subscribeLogs,
+    listSessions, createSession, updateSession, deleteSession,
+    loadMaster, importAssets,
+    loadLogs, loadLogsSummary, saveVerify, deleteLog, subscribeLogs, unsubscribe,
     uploadPhoto, photoUrls
   };
 })();
