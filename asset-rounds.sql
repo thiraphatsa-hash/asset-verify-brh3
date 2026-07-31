@@ -28,9 +28,12 @@ create table if not exists asset_sessions (
 );
 create index if not exists asset_sessions_site_idx on asset_sessions (site, created_at desc);
 
--- ── 2) ผูกทะเบียนทรัพย์สินเข้ากับรอบ ─────────────────────────────────────────
+-- ── 2) ผูกทะเบียนทรัพย์สินและผลตรวจเข้ากับรอบ ─────────────────────────────────
+-- ⚠ ต้องเพิ่มคอลัมน์ของ "ทั้งสองตาราง" ก่อนบล็อกย้ายข้อมูลด้านล่าง
+--    (บล็อกนั้น update ทั้ง asset_master และ asset_verify_log)
 alter table asset_master add column if not exists asset_id uuid not null default gen_random_uuid();
 alter table asset_master add column if not exists session_id uuid;
+alter table asset_verify_log add column if not exists session_id uuid;
 
 -- ย้ายข้อมูลเดิมที่ยังไม่มีรอบ → สร้างรอบแรกให้อัตโนมัติ (ทำครั้งเดียว)
 do $$
@@ -86,8 +89,7 @@ create unique index if not exists asset_master_session_inv_uidx
   on asset_master (session_id, inventory_number);
 create index if not exists asset_master_session_idx on asset_master (session_id);
 
--- ── 3) ผูกผลตรวจเข้ากับรอบ ───────────────────────────────────────────────────
-alter table asset_verify_log add column if not exists session_id uuid;
+-- ── 3) ผูกผลตรวจเข้ากับรอบ (คอลัมน์ session_id เพิ่มไปแล้วในข้อ 2) ─────────────
 do $$
 begin
   alter table asset_verify_log add constraint asset_verify_log_session_fk
