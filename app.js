@@ -13,11 +13,16 @@ const App = (() => {
   const INV_RE = /RT-[A-Z0-9]{4}-[A-Z0-9]{2}-\d{4}/;
 
   const RESULTS = {
-    FOUND_NORMAL:  { result: 'FOUND',     condition: 'NORMAL',  label: 'พบ · ปกติ',  cls: 'found' },
-    FOUND_DAMAGED: { result: 'FOUND',     condition: 'DAMAGED', label: 'พบ · ชำรุด', cls: 'damaged' },
-    NOT_FOUND:     { result: 'NOT_FOUND', condition: null,      label: 'ไม่พบ',      cls: 'notfound' },
-    MOVED:         { result: 'MOVED',     condition: null,      label: 'ย้ายออก',    cls: 'moved' }
+    FOUND_NORMAL: { result: 'FOUND',     condition: 'NORMAL', label: 'พบ',      cls: 'found' },
+    NOT_FOUND:    { result: 'NOT_FOUND', condition: null,     label: 'ไม่พบ',   cls: 'notfound' },
+    MOVED:        { result: 'MOVED',     condition: null,     label: 'ย้ายออก', cls: 'moved' }
   };
+  const THEMES = [
+    { key: 'porcelain', label: 'Porcelain — ขาวสะอาด น้ำเงินกรมท่า' },
+    { key: 'graphite',  label: 'Graphite — พื้นเข้ม ทอง' },
+    { key: 'ink',       label: 'Ink & Serif — ครีม แดงเลือดหมู' },
+    { key: 'organic',   label: 'Organic — ครีมทราย ดินเผา' }
+  ];
   const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
     'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 
@@ -263,7 +268,7 @@ const App = (() => {
   }
   function classify(log) {
     if (!log) return 'pending';
-    if (log.result === 'FOUND') return log.condition === 'DAMAGED' ? 'damaged' : 'found';
+    if (log.result === 'FOUND') return 'found';
     if (log.result === 'NOT_FOUND') return 'notfound';
     if (log.result === 'MOVED') return 'moved';
     return 'pending';
@@ -271,11 +276,24 @@ const App = (() => {
   function statusLabel(log) {
     const c = classify(log);
     if (c === 'pending') return 'ยังไม่ตรวจ';
-    if (c === 'found') return 'พบ · ปกติ';
-    if (c === 'damaged') return 'พบ · ชำรุด';
+    if (c === 'found') return 'พบ';
     if (c === 'notfound') return 'ไม่พบ';
     return 'ย้ายออก' + (log.moveToSite ? ' → ' + log.moveToSite : '');
   }
+  // ── ธีมหน้าเว็บ (4 แบบตามไฟล์ต้นแบบ) ───────────────────────────────────────
+  function applyTheme(key) {
+    const t = THEMES.some((x) => x.key === key) ? key : 'porcelain';
+    document.documentElement.setAttribute('data-theme', t);
+    cacheSet('avTheme', t);
+    const sel = el('themeSelect');
+    if (sel) sel.value = t;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.content = getComputedStyle(document.documentElement)
+        .getPropertyValue('--accent').trim() || '#1B3A6B';
+    }
+  }
+  function setTheme(key) { applyTheme(key); toast('เปลี่ยนธีมแล้ว', 'success'); }
 
   // ── Auth ───────────────────────────────────────────────────────────────────
   function setAuthMode(mode) {
@@ -489,7 +507,7 @@ const App = (() => {
   function sessionStats(s) {
     const id = s.sessionId;
     const seen = new Set();
-    let found = 0, damaged = 0, notfound = 0, moved = 0;
+    let found = 0, notfound = 0, moved = 0;
     const latest = new Map();
     const rows = state.logSummary.filter((l) => l.sessionId === id)
       .concat(queueOfSession(id));
@@ -502,7 +520,6 @@ const App = (() => {
       seen.add(l.inventoryNumber);
       const c = classify(l);
       if (c === 'found') found++;
-      else if (c === 'damaged') damaged++;
       else if (c === 'notfound') notfound++;
       else if (c === 'moved') moved++;
     });
@@ -510,7 +527,7 @@ const App = (() => {
     const done = Math.min(seen.size, total || seen.size);
     return {
       total: total, done: done, pending: Math.max(total - done, 0),
-      found: found, damaged: damaged, notfound: notfound, moved: moved,
+      found: found, notfound: notfound, moved: moved,
       pct: total ? Math.round(done * 100 / total) : 0
     };
   }
@@ -568,7 +585,6 @@ const App = (() => {
         '<div class="bar"><i class="' + (done ? 'ok' : '') + '" style="width:' + st.pct + '%"></i></div>' +
         '<div class="sc-chips">' +
           '<span class="stat-chip st-found">พบ ' + st.found + '</span>' +
-          '<span class="stat-chip st-damaged">ชำรุด ' + st.damaged + '</span>' +
           '<span class="stat-chip st-notfound">ไม่พบ ' + st.notfound + '</span>' +
           '<span class="stat-chip st-moved">ย้ายออก ' + st.moved + '</span>' +
           '<span class="stat-chip st-pending">ค้าง ' + st.pending + '</span>' +
@@ -897,9 +913,7 @@ const App = (() => {
     }
     if (ui.status) {
       list = list.filter((a) => {
-        const c = classify(state.latest.get(a.inventoryNumber));
-        if (ui.status === 'found') return c === 'found' || c === 'damaged';
-        return c === ui.status;
+        return classify(state.latest.get(a.inventoryNumber)) === ui.status;
       });
     }
     const sorted = list.slice();
@@ -945,37 +959,88 @@ const App = (() => {
     el('cardWrap').classList.toggle('hidden', tableMode);
 
     if (tableMode) {
+      // ── โครงตารางยึดตามฟอร์มรายงานตรวจสอบทรัพย์สินต้นฉบับ (.xls) ──
       const allSel = list.length > 0 && list.every((a) => state.selection.has(a.inventoryNumber));
-      el('assetThead').innerHTML = '<tr>' +
-        (state.canWrite ? '<th class="col-check"><input type="checkbox" id="checkAll"' +
-          (allSel ? ' checked' : '') + ' title="เลือกทั้งหมดที่กรองอยู่"></th>' : '') +
-        '<th>รหัสทรัพย์สิน</th><th>ชื่อทรัพย์สิน</th>' +
-        (isFixed ? '<th class="col-hide-sm">ผู้รับผิดชอบ</th>' : '<th class="col-hide-sm">Material</th>') +
-        '<th class="col-status">สถานะ</th><th class="col-hide-sm">ตรวจโดย</th>' +
-        (state.canWrite ? '<th class="col-quick">บันทึกเร็ว</th>' : '') +
-        '</tr>';
-      el('assetTbody').innerHTML = list.map((a) => {
+      const chk = state.canWrite ? '<th class="col-check" rowspan="2"><input type="checkbox" id="checkAll"' +
+        (allSel ? ' checked' : '') + ' title="เลือกทั้งหมดที่กรองอยู่"></th>' : '';
+      el('assetThead').innerHTML = isFixed
+        ? '<tr>' + chk +
+            '<th rowspan="2" class="c-lg">NO.</th>' +
+            '<th rowspan="2" class="c-lg">Asset Class</th>' +
+            '<th rowspan="2" class="c-lg">Asset Number</th>' +
+            '<th rowspan="2" class="c-xl">Sub Numb</th>' +
+            '<th rowspan="2">Inventory Number</th>' +
+            '<th rowspan="2">Description</th>' +
+            '<th rowspan="2" class="c-xl">Serial Number</th>' +
+            '<th rowspan="2" class="c-md">Staff – Text</th>' +
+            '<th rowspan="2" class="c-xl">Current Site</th>' +
+            '<th colspan="2" class="col-yn">ผลการตรวจเช็ค</th>' +
+            '<th colspan="3" class="c-lg">ย้ายออก</th>' +
+            '<th rowspan="2" class="c-lg">หมายเหตุ</th>' +
+            '<th rowspan="2" class="col-more"></th>' +
+          '</tr><tr>' +
+            '<th class="col-yn yn-yes">Yes</th><th class="col-yn yn-no">No</th>' +
+            '<th class="c-lg">ส่งไป SITE</th><th class="c-lg">เลขที่ใบส่ง</th><th class="c-lg">วันที่ส่ง</th>' +
+          '</tr>'
+        : '<tr>' + chk +
+            '<th rowspan="2" class="c-lg">NO.</th>' +
+            '<th rowspan="2" class="c-md">Material</th>' +
+            '<th rowspan="2">Description</th>' +
+            '<th rowspan="2">Inventory Number</th>' +
+            '<th rowspan="2" class="c-xl">Plan</th>' +
+            '<th rowspan="2" class="c-xl">Sloc</th>' +
+            '<th colspan="2" class="col-yn">ผลการตรวจเช็ค</th>' +
+            '<th colspan="3" class="c-lg">ย้ายออก</th>' +
+            '<th rowspan="2" class="c-lg">หมายเหตุ</th>' +
+            '<th rowspan="2" class="col-more"></th>' +
+          '</tr><tr>' +
+            '<th class="col-yn yn-yes">Yes</th><th class="col-yn yn-no">No</th>' +
+            '<th class="c-lg">ส่งไป SITE</th><th class="c-lg">เลขที่ใบส่ง</th><th class="c-lg">วันที่ส่ง</th>' +
+          '</tr>';
+
+      const cell = (v, cls) => '<td class="' + (cls || '') + '">' + esc(v || '—') + '</td>';
+      el('assetTbody').innerHTML = list.map((a, i) => {
         const latest = state.latest.get(a.inventoryNumber);
         const cls = classify(latest);
         const inv = esc(a.inventoryNumber);
         const sel = state.selection.has(a.inventoryNumber);
+        const dis = state.canWrite ? '' : ' disabled';
+        const ynYes = '<td class="col-yn yn-yes"><input type="checkbox" class="yn-box yes' +
+          (cls === 'found' ? ' on' : '') + '" data-inv="' + inv + '" data-res="FOUND_NORMAL"' +
+          (cls === 'found' ? ' checked' : '') + dis + ' title="พบ"></td>';
+        const ynNo = '<td class="col-yn yn-no"><input type="checkbox" class="yn-box no' +
+          (cls === 'notfound' ? ' on' : '') + '" data-inv="' + inv + '" data-res="NOT_FOUND"' +
+          (cls === 'notfound' ? ' checked' : '') + dis + ' title="ไม่พบ"></td>';
+        const mv = cls === 'moved' ? latest : null;
+        const info = latest
+          ? '<small class="row-meta">' + esc(latest.inspector || '') + ' · ' +
+            esc(thaiDT(latest.verifiedAt)) + (latest.pending ? ' · รอส่ง' : '') + '</small>'
+          : '';
         return '<tr class="row-' + cls + (sel ? ' row-selected' : '') + '" data-inv="' + inv + '">' +
           (state.canWrite ? '<td class="col-check"><input type="checkbox" class="row-check" data-inv="' +
             inv + '"' + (sel ? ' checked' : '') + '></td>' : '') +
-          '<td class="mono nowrap">' + inv + '</td>' +
-          '<td class="col-desc">' + esc(a.description || '') +
-            (a.serialNumber ? '<small>S/N ' + esc(a.serialNumber) + '</small>' : '') +
-            '<span class="sm-status">' + statusCell(latest) + '</span></td>' +
-          '<td class="col-hide-sm">' + esc(isFixed
-            ? ((a.staffText || '').trim() || '—') : (a.materialCode || '—')) + '</td>' +
-          '<td class="col-status">' + statusCell(latest) + '</td>' +
-          '<td class="col-hide-sm">' + verifyMeta(latest) + '</td>' +
-          (state.canWrite ? '<td class="col-quick">' +
-            '<button class="qbtn ok" data-act="FOUND_NORMAL" title="พบ · ปกติ">✓</button>' +
-            '<button class="qbtn no" data-act="NOT_FOUND" title="ไม่พบ">✕</button>' +
-            '<button class="qbtn more" data-act="open" title="รายละเอียด">⋯</button></td>' : '') +
+          '<td class="c-lg num">' + (i + 1) + '</td>' +
+          (isFixed
+            ? cell(a.assetClass, 'c-lg') + cell(a.assetNumber, 'c-lg mono') +
+              cell(a.subNumber, 'c-xl') +
+              '<td class="mono nowrap inv-cell">' + inv +
+                '<span class="sm-status">' + statusCell(latest) + '</span></td>' +
+              '<td class="col-desc">' + esc(a.description || '') + info + '</td>' +
+              cell(a.serialNumber, 'c-xl') + cell((a.staffText || '').trim(), 'c-md') +
+              cell(a.currentSite, 'c-xl')
+            : cell(a.materialCode, 'c-md mono') +
+              '<td class="col-desc">' + esc(a.description || '') + info + '</td>' +
+              '<td class="mono nowrap inv-cell">' + inv +
+                '<span class="sm-status">' + statusCell(latest) + '</span></td>' +
+              cell(a.plant, 'c-xl') + cell(a.sloc, 'c-xl')) +
+          ynYes + ynNo +
+          cell(mv ? mv.moveToSite : '', 'c-lg') +
+          cell(mv ? mv.moveDocNo : '', 'c-lg') +
+          cell(mv && mv.moveDate ? thaiD(mv.moveDate) : '', 'c-lg') +
+          cell(latest ? latest.note : '', 'c-lg note-cell') +
+          '<td class="col-more"><button class="qbtn more" data-act="open" title="รายละเอียด / ย้ายออก / รูปถ่าย">⋯</button></td>' +
           '</tr>';
-      }).join('') || '<tr><td colspan="7"><p class="empty-note">ไม่พบรายการตามเงื่อนไข</p></td></tr>';
+      }).join('') || '<tr><td colspan="16"><p class="empty-note">ไม่พบรายการตามเงื่อนไข</p></td></tr>';
     } else {
       el('cardWrap').innerHTML = list.map((a) => {
         const latest = state.latest.get(a.inventoryNumber);
@@ -1049,6 +1114,43 @@ const App = (() => {
     const n = state.selection.size;
     el('bulkBarCount').textContent = n;
     el('bulkBar').classList.toggle('hidden', n === 0 || !state.canWrite);
+    const del = el('bulkDelete');
+    if (del) del.classList.toggle('hidden', !state.profile || state.profile.role !== 'admin');
+  }
+  /** ลบประวัติการตรวจของทุกรายการที่เลือก (คืนสถานะเป็น "ยังไม่ตรวจ") */
+  async function deleteSelectedHistory() {
+    if (!state.profile || state.profile.role !== 'admin') {
+      return toast('เฉพาะผู้ดูแลระบบเท่านั้นที่ลบประวัติได้', 'warn');
+    }
+    const invs = Array.from(state.selection);
+    if (!invs.length) return;
+    const withLogs = invs.filter((i) => state.latest.get(i));
+    if (!withLogs.length) return toast('รายการที่เลือกยังไม่มีประวัติการตรวจ', 'warn');
+    if (!window.confirm('ลบประวัติการตรวจของ ' + withLogs.length + ' รายการถาวร?\n\n' +
+      'รายการเหล่านี้จะกลับเป็น "ยังไม่ตรวจ" — กู้คืนไม่ได้')) return;
+    try {
+      busy('กำลังลบประวัติ...');
+      const s = state.activeSession;
+      // ลบของที่ยังค้างในคิวเครื่องนี้ก่อน (ยังไม่ถูกส่งขึ้นเซิร์ฟเวอร์)
+      const pending = state.queueItems.filter((q) =>
+        q.sessionId === s.sessionId && withLogs.indexOf(q.inventoryNumber) >= 0);
+      for (let i = 0; i < pending.length; i++) {
+        try { await qDel(pending[i].clientId); } catch (e) {}
+      }
+      state.queueItems = state.queueItems.filter((q) => pending.indexOf(q) < 0);
+      const res = await AssetStore.deleteLogsFor(s.sessionId, withLogs);
+      state.logs = state.logs.filter((l) => withLogs.indexOf(l.inventoryNumber) < 0);
+      state.logSummary = state.logSummary.filter((l) =>
+        !(l.sessionId === s.sessionId && withLogs.indexOf(l.inventoryNumber) >= 0));
+      cacheSet('avLogs_' + s.sessionId, state.logs);
+      state.selection.clear();
+      afterDataChange();
+      toast('ลบประวัติแล้ว ' + (res.deleted + pending.length) + ' รายการ', 'success');
+    } catch (e) {
+      toast('ลบไม่สำเร็จ: ' + e.message, 'error');
+    } finally {
+      busyHide();
+    }
   }
   async function applySelection(resultKey) {
     const invs = Array.from(state.selection);
@@ -1634,24 +1736,10 @@ const App = (() => {
   // ── Dashboard ──────────────────────────────────────────────────────────────
   function typeStats(type) {
     const list = state.master.filter((a) => a.assetType === type);
-    const st = { total: list.length, pending: 0, found: 0, damaged: 0, notfound: 0, moved: 0 };
+    const st = { total: list.length, pending: 0, found: 0, notfound: 0, moved: 0 };
     list.forEach((a) => { st[classify(state.latest.get(a.inventoryNumber))]++; });
     st.done = st.total - st.pending;
     return st;
-  }
-  function progressCard(title, st) {
-    const pct = st.total ? Math.round(st.done * 100 / st.total) : 0;
-    return '<div class="dash-card"><h4>' + title + '</h4>' +
-      '<div class="progress-line"><span>ตรวจแล้ว ' + st.done + ' / ' + st.total +
-      '</span><span>' + pct + '%</span></div>' +
-      '<div class="bar"><i class="' + (pct >= 100 ? 'ok' : '') + '" style="width:' + pct + '%"></i></div>' +
-      '<div class="stat-chips">' +
-      '<span class="stat-chip st-found">พบปกติ ' + st.found + '</span>' +
-      '<span class="stat-chip st-damaged">ชำรุด ' + st.damaged + '</span>' +
-      '<span class="stat-chip st-notfound">ไม่พบ ' + st.notfound + '</span>' +
-      '<span class="stat-chip st-moved">ย้ายออก ' + st.moved + '</span>' +
-      '<span class="stat-chip st-pending">ยังไม่ตรวจ ' + st.pending + '</span>' +
-      '</div></div>';
   }
   function groupBars(list, keyFn) {
     const groups = {};
@@ -1678,6 +1766,58 @@ const App = (() => {
       title + ' (' + rows.length + ') <span>▾</span></button>' +
       '<div id="coll-' + id + '" class="collapse-body hidden">' + rows.join('') + '</div>';
   }
+  // ── ชิ้นส่วนกราฟ (วาดเองด้วย SVG/HTML ไม่ต้องโหลดไลบรารี) ────────────────────
+  function donutSvg(parts, centerBig, centerSmall) {
+    const total = parts.reduce((n, p) => n + p.value, 0) || 1;
+    const R = 52, C = 2 * Math.PI * R;
+    let offset = 0;
+    const arcs = parts.filter((p) => p.value > 0).map((p) => {
+      const len = (p.value / total) * C;
+      const seg = '<circle class="donut-seg" cx="70" cy="70" r="' + R + '" fill="none" stroke="' +
+        p.color + '" stroke-width="18" stroke-dasharray="' + len.toFixed(2) + ' ' +
+        (C - len).toFixed(2) + '" stroke-dashoffset="' + (-offset).toFixed(2) + '"></circle>';
+      offset += len;
+      return seg;
+    }).join('');
+    return '<svg viewBox="0 0 140 140" class="donut" role="img">' +
+      '<circle cx="70" cy="70" r="' + R + '" fill="none" stroke="var(--line-soft)" stroke-width="18"></circle>' +
+      arcs +
+      '<text x="70" y="66" class="donut-big">' + esc(centerBig) + '</text>' +
+      '<text x="70" y="86" class="donut-small">' + esc(centerSmall) + '</text></svg>';
+  }
+  function legendRows(parts, total) {
+    return '<div class="legend">' + parts.map((p) =>
+      '<div class="legend-row"><span class="dot" style="background:' + p.color + '"></span>' +
+      '<span class="legend-label">' + esc(p.label) + '</span>' +
+      '<b class="mono">' + p.value + '</b>' +
+      '<small>' + (total ? Math.round(p.value * 100 / total) : 0) + '%</small></div>').join('') + '</div>';
+  }
+  function dailyBars(logs) {
+    const byDay = {};
+    logs.forEach((l) => {
+      const d = new Date(l.verifiedAt);
+      if (isNaN(d.getTime())) return;
+      const k = d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+      byDay[k] = (byDay[k] || 0) + 1;
+    });
+    const keys = Object.keys(byDay).sort().slice(-14);
+    if (!keys.length) return '<p class="hint">ยังไม่มีการตรวจในรอบนี้</p>';
+    const max = Math.max.apply(null, keys.map((k) => byDay[k]));
+    return '<div class="bar-chart">' + keys.map((k) => {
+      const h = Math.max(Math.round(byDay[k] * 100 / max), 4);
+      const d = new Date(k + 'T00:00:00');
+      return '<div class="bar-col" title="' + esc(thaiD(k)) + ' — ' + byDay[k] + ' รายการ">' +
+        '<span class="bar-val mono">' + byDay[k] + '</span>' +
+        '<div class="bar-fill" style="height:' + h + '%"></div>' +
+        '<span class="bar-lab">' + d.getDate() + '/' + (d.getMonth() + 1) + '</span></div>';
+    }).join('') + '</div>';
+  }
+  function kpiCard(label, value, sub, tone) {
+    return '<div class="kpi ' + (tone || '') + '">' +
+      '<span class="kpi-label">' + esc(label) + '</span>' +
+      '<span class="kpi-num mono">' + esc(String(value)) + '</span>' +
+      '<span class="kpi-sub">' + sub + '</span></div>';
+  }
   function renderDash() {
     const s = state.activeSession;
     if (!s) { el('dashContent').innerHTML = '<p class="empty-note">เลือกรอบตรวจก่อน</p>'; return; }
@@ -1686,8 +1826,33 @@ const App = (() => {
     const rn = typeStats('RENTAL');
     const fixedList = state.master.filter((a) => a.assetType === 'FIXED');
     const rentalList = state.master.filter((a) => a.assetType === 'RENTAL');
+    const logs = allLogs();
+    const all = {
+      total: fx.total + rn.total, done: fx.done + rn.done, pending: fx.pending + rn.pending,
+      found: fx.found + rn.found, notfound: fx.notfound + rn.notfound, moved: fx.moved + rn.moved
+    };
+    const pct = all.total ? Math.round(all.done * 100 / all.total) : 0;
+    const unlistedLogs = logs.filter((l) => l.unregistered);
+    const unlistedCodes = {};
+    unlistedLogs.forEach((l) => { unlistedCodes[l.inventoryNumber] = true; });
+    const extraCount = Object.keys(unlistedCodes).length;
+    const parts = [
+      { label: 'พบ', value: all.found, color: 'var(--ok)' },
+      { label: 'ไม่พบ', value: all.notfound, color: 'var(--no)' },
+      { label: 'ย้ายออก', value: all.moved, color: 'var(--mv)' },
+      { label: 'ยังไม่ตรวจ', value: all.pending, color: 'var(--line)' }
+    ];
+    const recent = logs.slice().sort((a, b) => String(b.verifiedAt).localeCompare(String(a.verifiedAt)))
+      .slice(0, 8).map((l) => {
+        const a = state.master.find((m) => m.inventoryNumber === l.inventoryNumber);
+        return '<tr><td class="mono nowrap">' + esc(l.inventoryNumber) + '</td>' +
+          '<td>' + esc(a ? (a.description || '') : (l.unlistedDesc || 'นอกทะเบียน')) + '</td>' +
+          '<td>' + statusCell(l) + '</td>' +
+          '<td class="c-md">' + esc(l.inspector || '') + '</td>' +
+          '<td class="c-md nowrap">' + esc(thaiDT(l.verifiedAt)) + '</td></tr>';
+      }).join('');
     const byInspector = {};
-    allLogs().forEach((l) => {
+    logs.forEach((l) => {
       const k = l.inspector || '(ไม่ระบุ)';
       byInspector[k] = (byInspector[k] || 0) + 1;
     });
@@ -1705,36 +1870,71 @@ const App = (() => {
     const pendR = rentalList.filter((a) => classify(state.latest.get(a.inventoryNumber)) === 'pending');
     const notFound = [];
     const moved = [];
-    const damaged = [];
     state.master.forEach((a) => {
       const l = state.latest.get(a.inventoryNumber);
       const c = classify(l);
       if (c === 'notfound') notFound.push(issueRow(a, l));
       if (c === 'moved') moved.push(issueRow(a, l));
-      if (c === 'damaged') damaged.push(issueRow(a, l));
     });
-    const unl = allLogs().filter((l) => l.unregistered)
+    const unl = unlistedLogs.slice()
       .sort((a, b) => String(b.verifiedAt).localeCompare(String(a.verifiedAt)))
       .map((l) => '<div class="dash-list-item"><span class="mono">' + esc(l.inventoryNumber) +
         '</span><span>' + esc(l.unlistedDesc || '') + '</span><b>' + esc(l.inspector || '') +
         ' · ' + esc(thaiDT(l.verifiedAt)) + '</b></div>');
 
     el('dashContent').innerHTML =
-      '<div class="dash-grid">' +
-      progressCard('🏢 ทรัพย์สิน Fixed Assets', fx) +
-      progressCard('🚚 ทรัพย์สินของเช่า', rn) +
-      '<div class="dash-card"><h4>ตามหมวด — Fixed Assets</h4>' +
-      groupBars(fixedList, (a) => 'RT-' + (a.categoryCode || '?')) + '</div>' +
-      '<div class="dash-card"><h4>ตามหมวด — ของเช่า</h4>' +
-      groupBars(rentalList, (a) => 'RT-' + (a.categoryCode || '?')) + '</div>' +
-      '<div class="dash-card"><h4>ตามผู้รับผิดชอบ (Fixed Assets)</h4>' +
-      groupBars(fixedList, (a) => (a.staffText || '').trim()) + '</div>' +
-      '<div class="dash-card"><h4>ผลงานผู้ตรวจ (จำนวนครั้งที่บันทึก)</h4>' +
-      (inspectorRows.join('') || '<p class="hint">ยังไม่มีการตรวจ</p>') + '</div>' +
+      '<div class="kpi-row">' +
+        kpiCard('ทรัพย์สินทั้งหมด', all.total.toLocaleString(),
+          'Fixed ' + fx.total + ' · ของเช่า ' + rn.total, '') +
+        kpiCard('ตรวจแล้ว', all.done.toLocaleString(),
+          '<b class="' + (pct >= 100 ? 'up' : '') + '">' + pct + '%</b> ของทั้งหมด · เหลือ ' +
+          all.pending, 'tone-ok') +
+        kpiCard('ไม่พบ', all.notfound.toLocaleString(),
+          all.done ? Math.round(all.notfound * 100 / all.done) + '% ของที่ตรวจแล้ว' : 'ยังไม่มีข้อมูล',
+          'tone-no') +
+        kpiCard('ย้ายออก / พบเพิ่ม', all.moved + ' / ' + extraCount,
+          'ย้ายไปไซต์อื่น ' + all.moved + ' · นอกทะเบียน ' + extraCount, 'tone-mv') +
       '</div>' +
+      '<div class="dash-grid">' +
+        '<div class="dash-card"><h4>สัดส่วนผลการตรวจ</h4>' +
+          '<div class="donut-wrap">' + donutSvg(parts, pct + '%', 'ตรวจแล้ว') +
+          legendRows(parts, all.total) + '</div></div>' +
+        '<div class="dash-card"><h4>จำนวนที่ตรวจต่อวัน (14 วันล่าสุด)</h4>' +
+          dailyBars(logs) + '</div>' +
+        '<div class="dash-card"><h4>ความคืบหน้า — Fixed Assets</h4>' +
+          '<div class="progress-line"><span>ตรวจแล้ว ' + fx.done + ' / ' + fx.total + '</span><span>' +
+          (fx.total ? Math.round(fx.done * 100 / fx.total) : 0) + '%</span></div>' +
+          '<div class="bar"><i style="width:' + (fx.total ? fx.done * 100 / fx.total : 0) + '%"></i></div>' +
+          '<div class="stat-chips">' +
+          '<span class="stat-chip st-found">พบ ' + fx.found + '</span>' +
+          '<span class="stat-chip st-notfound">ไม่พบ ' + fx.notfound + '</span>' +
+          '<span class="stat-chip st-moved">ย้ายออก ' + fx.moved + '</span>' +
+          '<span class="stat-chip st-pending">ค้าง ' + fx.pending + '</span></div>' +
+          '<h4 class="mt">ความคืบหน้า — ของเช่า</h4>' +
+          '<div class="progress-line"><span>ตรวจแล้ว ' + rn.done + ' / ' + rn.total + '</span><span>' +
+          (rn.total ? Math.round(rn.done * 100 / rn.total) : 0) + '%</span></div>' +
+          '<div class="bar"><i style="width:' + (rn.total ? rn.done * 100 / rn.total : 0) + '%"></i></div>' +
+          '<div class="stat-chips">' +
+          '<span class="stat-chip st-found">พบ ' + rn.found + '</span>' +
+          '<span class="stat-chip st-notfound">ไม่พบ ' + rn.notfound + '</span>' +
+          '<span class="stat-chip st-moved">ย้ายออก ' + rn.moved + '</span>' +
+          '<span class="stat-chip st-pending">ค้าง ' + rn.pending + '</span></div></div>' +
+        '<div class="dash-card"><h4>ผลงานผู้ตรวจ</h4>' +
+          (inspectorRows.join('') || '<p class="hint">ยังไม่มีการตรวจ</p>') + '</div>' +
+        '<div class="dash-card"><h4>ตามหมวด — Fixed Assets</h4>' +
+          groupBars(fixedList, (a) => 'RT-' + (a.categoryCode || '?')) + '</div>' +
+        '<div class="dash-card"><h4>ตามหมวด — ของเช่า</h4>' +
+          groupBars(rentalList, (a) => 'RT-' + (a.categoryCode || '?')) + '</div>' +
+        '<div class="dash-card wide"><h4>ตามผู้รับผิดชอบ (Fixed Assets)</h4>' +
+          groupBars(fixedList, (a) => (a.staffText || '').trim()) + '</div>' +
+      '</div>' +
+      '<div class="dash-card wide"><h4>รายการตรวจล่าสุด</h4>' +
+        (recent ? '<div class="table-wrap flat"><table class="asset-table mini"><thead><tr>' +
+          '<th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>ผล</th><th class="c-md">ผู้ตรวจ</th>' +
+          '<th class="c-md">เวลา</th></tr></thead><tbody>' + recent + '</tbody></table></div>'
+          : '<p class="hint">ยังไม่มีการตรวจในรอบนี้</p>') + '</div>' +
       dashList('pf', '⬜ ยังไม่ตรวจ — Fixed Assets', pendF.map(pendingRow)) +
       dashList('pr', '⬜ ยังไม่ตรวจ — ของเช่า', pendR.map(pendingRow)) +
-      dashList('dm', '🛠 ชำรุด', damaged) +
       dashList('nf', '❌ ไม่พบ', notFound) +
       dashList('mv', '🚚 ย้ายออกไปไซต์อื่น', moved) +
       dashList('un', '＋ ทรัพย์สินนอกทะเบียน', unl);
@@ -1745,6 +1945,27 @@ const App = (() => {
   }
 
   // ── Export Excel ───────────────────────────────────────────────────────────
+  /** หัวรายงาน 4 บรรทัดแรก เหมือนฟอร์มต้นฉบับ */
+  function reportHead(s, title, width) {
+    const blank = new Array(width).fill('');
+    const line = (txt) => { const r = blank.slice(); r[0] = txt; return r; };
+    const d = new Date();
+    const from = s.countDateFrom ? new Date(s.countDateFrom + 'T00:00:00') : d;
+    const to = s.countDateTo ? new Date(s.countDateTo + 'T00:00:00') : null;
+    const days = from.getDate() + (to && to.getDate() !== from.getDate() ? ' - ' + to.getDate() : '');
+    const titleRow = blank.slice();
+    titleRow[Math.min(4, width - 1)] = title;
+    return [
+      titleRow,
+      line('Site/Cost center......' + (s.costCenter || s.site || '') + '..........'),
+      line('วันที่…' + days + '.….. /…' + TH_MONTHS[from.getMonth()].replace(/\./g, '') +
+        '.... /….' + (from.getFullYear() + 543) + '......'),
+      line('Run Date ' + pad2(d.getDate()) + '.' + pad2(d.getMonth() + 1) + '.' + d.getFullYear() +
+        ' Time ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds())),
+      blank.slice()
+    ];
+  }
+  const mergeRange = (r1, c1, r2, c2) => ({ s: { r: r1, c: c1 }, e: { r: r2, c: c2 } });
   async function exportExcel() {
     const s = state.activeSession;
     if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
@@ -1752,48 +1973,96 @@ const App = (() => {
       busy('กำลังสร้างไฟล์ Excel...');
       await ensureLibrary('xlsx');
       const XLSX = window.XLSX;
-      const latestCols = (a) => {
-        const l = state.latest.get(a.inventoryNumber);
-        const gps = l && l.gpsLat != null ? l.gpsLat + ',' + l.gpsLng : '';
-        return [
-          l ? statusLabel(l) : 'ยังไม่ตรวจ',
-          l && l.condition === 'DAMAGED' ? 'ชำรุด' : (l && l.result === 'FOUND' ? 'ปกติ' : ''),
-          l ? (l.inspector || '') : '', l ? thaiDT(l.verifiedAt) : '', l ? l.method : '',
-          l ? (l.locationText || '') : '', l ? (l.moveToSite || '') : '',
-          l ? (l.moveDocNo || '') : '', l && l.moveDate ? thaiD(l.moveDate) : '',
-          gps, l ? (l.note || '') : '',
-          l ? ((l.photoPaths || []).length || l.photoCount || 0) : 0
-        ];
-      };
-      const tail = ['สถานะ', 'สภาพ', 'ผู้ตรวจ', 'เวลาตรวจ', 'วิธี', 'ตำแหน่ง',
-        'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', 'GPS', 'หมายเหตุ', 'จำนวนรูป'];
-      const info = [
-        ['รายงานผลการตรวจนับทรัพย์สิน'],
+      // ══ ชีท 1: สรุปผลการตรวจนับ ══
+      const st = { FIXED: typeStats('FIXED'), RENTAL: typeStats('RENTAL') };
+      const logsAll = allLogs();
+      const unlisted = logsAll.filter((l) => l.unregistered);
+      const unlistedMap = {};
+      unlisted.forEach((l) => {
+        if (!unlistedMap[l.inventoryNumber] ||
+            String(l.verifiedAt) > String(unlistedMap[l.inventoryNumber].verifiedAt)) {
+          unlistedMap[l.inventoryNumber] = l;
+        }
+      });
+      const unlistedList = Object.keys(unlistedMap).map((k) => unlistedMap[k]);
+      const sum = [
+        ['สรุปผลการตรวจนับทรัพย์สิน'],
+        [],
         ['โครงการ', s.site], ['ชื่อรอบ', s.roundName || ''], ['Cost center', s.costCenter || ''],
         ['วันที่ตรวจ', thaiD(s.countDateFrom) + (s.countDateTo ? ' – ' + thaiD(s.countDateTo) : '')],
-        ['ผู้รับผิดชอบ', s.inspectorName || ''], ['หมายเหตุ', s.note || ''],
-        ['ออกรายงานเมื่อ', thaiDT(new Date().toISOString())], ['ออกโดย', inspectorName()]
+        ['ผู้รับผิดชอบ', s.inspectorName || ''],
+        ['ออกรายงานเมื่อ', thaiDT(new Date().toISOString())], ['ออกโดย', inspectorName()],
+        [],
+        ['รายการ', 'Fixed Assets', 'ของเช่า', 'รวม'],
+        ['ทรัพย์สินตามทะเบียน', st.FIXED.total, st.RENTAL.total, st.FIXED.total + st.RENTAL.total],
+        ['ตรวจแล้ว', st.FIXED.done, st.RENTAL.done, st.FIXED.done + st.RENTAL.done],
+        ['พบ', st.FIXED.found, st.RENTAL.found, st.FIXED.found + st.RENTAL.found],
+        ['ไม่พบ', st.FIXED.notfound, st.RENTAL.notfound, st.FIXED.notfound + st.RENTAL.notfound],
+        ['ย้ายออกไปไซต์อื่น', st.FIXED.moved, st.RENTAL.moved, st.FIXED.moved + st.RENTAL.moved],
+        ['ยังไม่ตรวจ', st.FIXED.pending, st.RENTAL.pending, st.FIXED.pending + st.RENTAL.pending],
+        [],
+        ['พบเพิ่มนอกทะเบียน (รายการ)', unlistedList.length],
+        ['คิดเป็นความคืบหน้า',
+          (st.FIXED.total + st.RENTAL.total
+            ? Math.round((st.FIXED.done + st.RENTAL.done) * 100 / (st.FIXED.total + st.RENTAL.total))
+            : 0) + '%']
       ];
-      const fixedRows = [['Inventory Number', 'Description', 'Asset Class', 'Asset Number',
-        'Sub Numb', 'Serial Number', 'Staff – Text', 'Current Site'].concat(tail)];
-      state.master.filter((a) => a.assetType === 'FIXED').forEach((a) => {
-        fixedRows.push([a.inventoryNumber, a.description || '', a.assetClass || '',
-          a.assetNumber || '', a.subNumber || '', a.serialNumber || '',
-          a.staffText || '', a.currentSite || ''].concat(latestCols(a)));
+      if (unlistedList.length) {
+        sum.push([], ['รายการที่พบเพิ่มนอกทะเบียน']);
+        sum.push(['รหัสทรัพย์สิน', 'คำอธิบาย', 'ผู้ตรวจ', 'เวลาตรวจ', 'ตำแหน่ง', 'หมายเหตุ']);
+        unlistedList.forEach((l) => {
+          sum.push([l.inventoryNumber, l.unlistedDesc || '', l.inspector || '',
+            thaiDT(l.verifiedAt), l.locationText || '', l.note || '']);
+        });
+      }
+
+      // ══ ชีท 2-3: ฟอร์มรายงานเดิม (Yes / No แยกคอลัมน์) ══
+      const ynOf = (a) => {
+        const l = state.latest.get(a.inventoryNumber);
+        const c = classify(l);
+        return {
+          yes: c === 'found' ? '✓' : '',
+          no: c === 'notfound' ? '✓' : '',
+          site: l && c === 'moved' ? (l.moveToSite || '') : '',
+          doc: l && c === 'moved' ? (l.moveDocNo || '') : '',
+          date: l && c === 'moved' && l.moveDate ? thaiD(l.moveDate) : '',
+          note: l ? [l.note || '', l.locationText ? '📌 ' + l.locationText : '',
+            l.inspector ? '(' + l.inspector + ' ' + thaiDT(l.verifiedAt) + ')' : '']
+            .filter(Boolean).join(' ') : ''
+        };
+      };
+      // Fixed Assets — 15 คอลัมน์ ตามฟอร์มต้นฉบับ
+      const fixedRows = reportHead(s, 'รายงานการตรวจสอบทรัพย์สิน Fixed Assets', 15);
+      fixedRows.push(['NO.', '', '', '', 'Inventory Number', 'Description', '', 'Staff – Text',
+        'Current Site', 'ผลการตรวจเช็ค', '', '', '', '', 'หมายเหตุ']);
+      fixedRows.push(['', 'Asset Class', 'Asset Number', 'Sub Numb', '', '', 'Serial Number', '', '',
+        'Yes', 'No', 'ย้ายออก', '', '', '']);
+      fixedRows.push(['', '', '', '', '', '', '', '', '', '', '', 'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', '']);
+      state.master.filter((a) => a.assetType === 'FIXED').forEach((a, i) => {
+        const y = ynOf(a);
+        fixedRows.push([i + 1, a.assetClass || '', a.assetNumber || '', a.subNumber || '',
+          a.inventoryNumber, a.description || '', a.serialNumber || '', a.staffText || '',
+          a.currentSite || '', y.yes, y.no, y.site, y.doc, y.date, y.note]);
       });
-      const rentalRows = [['Inventory Number', 'Material', 'Description', 'Plant', 'Sloc'].concat(tail)];
-      state.master.filter((a) => a.assetType === 'RENTAL').forEach((a) => {
-        rentalRows.push([a.inventoryNumber, a.materialCode || '', a.description || '',
-          a.plant || '', a.sloc || ''].concat(latestCols(a)));
+      // ของเช่า — 12 คอลัมน์
+      const rentalRows = reportHead(s, 'รายงานการตรวจสอบทรัพย์สิน ของเช่า', 12);
+      rentalRows.push(['NO.', 'Material', 'Description', 'Inventory Number', '', '',
+        'ผลการตรวจเช็ค', '', '', '', '', 'หมายเหตุ']);
+      rentalRows.push(['', '', '', '', 'Plan', 'Sloc', 'Yes', 'No', 'ย้ายออก', '', '', '']);
+      rentalRows.push(['', '', '', '', '', '', '', '', 'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', '']);
+      state.master.filter((a) => a.assetType === 'RENTAL').forEach((a, i) => {
+        const y = ynOf(a);
+        rentalRows.push([i + 1, a.materialCode || '', a.description || '', a.inventoryNumber,
+          a.plant || '', a.sloc || '', y.yes, y.no, y.site, y.doc, y.date, y.note]);
       });
-      const logRows = [['เวลาตรวจ', 'Inventory Number', 'ประเภท', 'ผล', 'สภาพ', 'วิธี', 'ผู้ตรวจ',
+      const logRows = [['เวลาตรวจ', 'Inventory Number', 'ประเภท', 'ผล', 'วิธี', 'ผู้ตรวจ',
         'ตำแหน่ง', 'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', 'GPS', 'หมายเหตุ', 'นอกทะเบียน',
         'คำอธิบายนอกทะเบียน', 'จำนวนรูป', 'สถานะส่ง']];
-      allLogs().sort((a, b) => String(a.verifiedAt).localeCompare(String(b.verifiedAt)))
+      logsAll.slice().sort((a, b) => String(a.verifiedAt).localeCompare(String(b.verifiedAt)))
         .forEach((l) => {
           logRows.push([thaiDT(l.verifiedAt), l.inventoryNumber,
             l.assetType === 'RENTAL' ? 'ของเช่า' : (l.assetType === 'UNLISTED' ? 'นอกทะเบียน' : 'Fixed'),
-            statusLabel(l), l.condition === 'DAMAGED' ? 'ชำรุด' : (l.result === 'FOUND' ? 'ปกติ' : ''),
+            statusLabel(l),
             l.method, l.inspector || '', l.locationText || '', l.moveToSite || '', l.moveDocNo || '',
             l.moveDate ? thaiD(l.moveDate) : '',
             l.gpsLat != null ? l.gpsLat + ',' + l.gpsLng : '',
@@ -1802,9 +2071,36 @@ const App = (() => {
             l.pending ? 'รอส่ง' : 'ส่งแล้ว']);
         });
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(info), 'ข้อมูลรอบตรวจ');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(fixedRows), 'Fixed Assets');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rentalRows), 'ของเช่า');
+      const wsSum = XLSX.utils.aoa_to_sheet(sum);
+      wsSum['!cols'] = [{ wch: 30 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 24 }];
+
+      const wsFixed = XLSX.utils.aoa_to_sheet(fixedRows);
+      wsFixed['!cols'] = [{ wch: 5 }, { wch: 10 }, { wch: 13 }, { wch: 8 }, { wch: 19 }, { wch: 34 },
+        { wch: 15 }, { wch: 20 }, { wch: 15 }, { wch: 6 }, { wch: 6 }, { wch: 12 }, { wch: 13 },
+        { wch: 13 }, { wch: 34 }];
+      // หัวตาราง 3 ชั้นแบบฟอร์มเดิม (แถว 6-8 → index 5-7)
+      wsFixed['!merges'] = [
+        mergeRange(0, 0, 0, 14),
+        mergeRange(5, 0, 7, 0), mergeRange(5, 4, 7, 4), mergeRange(5, 5, 7, 5),
+        mergeRange(5, 7, 7, 7), mergeRange(5, 8, 7, 8), mergeRange(5, 14, 7, 14),
+        mergeRange(6, 1, 7, 1), mergeRange(6, 2, 7, 2), mergeRange(6, 3, 7, 3), mergeRange(6, 6, 7, 6),
+        mergeRange(5, 9, 5, 13), mergeRange(6, 9, 7, 9), mergeRange(6, 10, 7, 10),
+        mergeRange(6, 11, 6, 13)
+      ];
+      const wsRental = XLSX.utils.aoa_to_sheet(rentalRows);
+      wsRental['!cols'] = [{ wch: 5 }, { wch: 14 }, { wch: 34 }, { wch: 19 }, { wch: 8 }, { wch: 8 },
+        { wch: 6 }, { wch: 6 }, { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 34 }];
+      wsRental['!merges'] = [
+        mergeRange(0, 0, 0, 11),
+        mergeRange(5, 0, 7, 0), mergeRange(5, 1, 7, 1), mergeRange(5, 2, 7, 2), mergeRange(5, 3, 7, 3),
+        mergeRange(5, 11, 7, 11),
+        mergeRange(6, 4, 7, 4), mergeRange(6, 5, 7, 5),
+        mergeRange(5, 6, 5, 10), mergeRange(6, 6, 7, 6), mergeRange(6, 7, 7, 7),
+        mergeRange(6, 8, 6, 10)
+      ];
+      XLSX.utils.book_append_sheet(wb, wsSum, 'สรุปผล');
+      XLSX.utils.book_append_sheet(wb, wsFixed, 'ทรัพย์สิน Fixed Assets');
+      XLSX.utils.book_append_sheet(wb, wsRental, 'ทรัพย์สินของเช่า');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(logRows), 'ประวัติการตรวจทั้งหมด');
       const d = s.countDateFrom ? new Date(s.countDateFrom + 'T00:00:00') : new Date();
       XLSX.writeFile(wb, 'Asset_' + s.site + '_' + d.getDate() + '.' + (d.getMonth() + 1) +
@@ -1934,6 +2230,12 @@ const App = (() => {
   }
   function renderManage() {
     loadUsers(true);
+    const sel = el('themeSelect');
+    if (sel && !sel.options.length) {
+      sel.innerHTML = THEMES.map((t) =>
+        '<option value="' + t.key + '">' + esc(t.label) + '</option>').join('');
+    }
+    if (sel) sel.value = cacheGet('avTheme') || 'porcelain';
     const totalAssets = state.sessions.reduce((n, s) => n + (s.assetCount || 0), 0);
     el('sysInfo').innerHTML =
       '<span>เวอร์ชัน: ' + APP_VERSION + '</span>' +
@@ -1963,7 +2265,7 @@ const App = (() => {
       openSession(id, act === 'dash' ? 'dash' : 'list');
     });
     el('assetTbody').addEventListener('click', (ev) => {
-      if (ev.target.closest('.row-check')) return;
+      if (ev.target.closest('.row-check') || ev.target.closest('.yn-box')) return;
       const row = ev.target.closest('tr[data-inv]');
       if (!row) return;
       const inv = row.dataset.inv;
@@ -1977,7 +2279,12 @@ const App = (() => {
     });
     el('assetTbody').addEventListener('change', (ev) => {
       const cb = ev.target.closest('.row-check');
-      if (cb) toggleSelect(cb.dataset.inv, cb.checked);
+      if (cb) return toggleSelect(cb.dataset.inv, cb.checked);
+      // ช่อง Yes / No ในตาราง = บันทึกผลตรวจทันที (เหมือนติ๊กในฟอร์มกระดาษ)
+      const yn = ev.target.closest('.yn-box');
+      if (!yn) return;
+      if (!yn.checked) { yn.checked = true; return; }   // ติ๊กออกไม่ได้ ใช้ ⋯ เพื่อแก้/ลบแทน
+      quickSave(yn.dataset.inv, yn.dataset.res);
     });
     el('assetThead').addEventListener('change', (ev) => {
       if (ev.target.id === 'checkAll') selectAllFiltered(ev.target.checked);
@@ -2007,6 +2314,7 @@ const App = (() => {
     setInterval(() => {
       if (state.profile && navigator.onLine && !document.hidden) refreshAll(true);
     }, 120000);
+    applyTheme(cacheGet('avTheme') || 'porcelain');
     const savedView = cacheGet('avView');
     if (savedView === 'card' || savedView === 'table') setView(savedView);
     boot();
@@ -2020,7 +2328,7 @@ const App = (() => {
     setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession,
     readMasterFile, confirmImport, cancelImport,
     setType, setView, setSearch, setCat, setStaff, setSort, setStatus,
-    clearSelection, applySelection, quickSave,
+    clearSelection, applySelection, quickSave, deleteSelectedHistory, setTheme,
     openAsset, closeRecord, chooseResult, saveRecord,
     addPhotos, removePhoto, viewPhoto, deleteLogEntry,
     openScanner, closeScanner, resumeScan, scanUnlisted,

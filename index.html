@@ -7,7 +7,7 @@
   <title>ระบบตรวจนับทรัพย์สิน</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -176,7 +176,6 @@
             <button class="chip active" data-status="" onclick="App.setStatus('')">ทั้งหมด</button>
             <button class="chip" data-status="pending" onclick="App.setStatus('pending')">ยังไม่ตรวจ</button>
             <button class="chip" data-status="found" onclick="App.setStatus('found')">พบ</button>
-            <button class="chip" data-status="damaged" onclick="App.setStatus('damaged')">ชำรุด</button>
             <button class="chip" data-status="notfound" onclick="App.setStatus('notfound')">ไม่พบ</button>
             <button class="chip" data-status="moved" onclick="App.setStatus('moved')">ย้ายออก</button>
           </div>
@@ -226,6 +225,12 @@
           <div id="usersList" class="users-list"></div>
         </div>
         <div class="card">
+          <h3>ธีมหน้าเว็บ</h3>
+          <p class="hint">เลือกโทนสีที่ใช้ทั้งระบบ — ระบบจำไว้ให้ในเครื่องนี้</p>
+          <select id="themeSelect" class="filter-select" onchange="App.setTheme(this.value)"></select>
+        </div>
+
+        <div class="card">
           <h3>ข้อมูลระบบ</h3>
           <div id="sysInfo" class="sys-info"></div>
         </div>
@@ -238,9 +243,9 @@
         <button class="link-button" type="button" onclick="App.clearSelection()">ล้าง</button></div>
       <input id="bulkBarLocation" type="text" list="locList" placeholder="ตำแหน่งที่ตรวจ (ไม่บังคับ)">
       <div class="bulk-bar-actions">
-        <button class="seg seg-ok" type="button" onclick="App.applySelection('FOUND_NORMAL')">✅ พบ · ปกติ</button>
-        <button class="seg seg-dmg" type="button" onclick="App.applySelection('FOUND_DAMAGED')">🛠 ชำรุด</button>
+        <button class="seg seg-ok" type="button" onclick="App.applySelection('FOUND_NORMAL')">✅ พบ</button>
         <button class="seg seg-no" type="button" onclick="App.applySelection('NOT_FOUND')">❌ ไม่พบ</button>
+        <button id="bulkDelete" class="seg seg-del hidden" type="button" onclick="App.deleteSelectedHistory()">🗑 ลบประวัติ</button>
       </div>
     </div>
 
@@ -297,9 +302,8 @@
           </div>
 
           <p class="form-label">ผลการตรวจ</p>
-          <div id="resultSeg" class="result-seg">
-            <button type="button" class="seg seg-ok" data-result="FOUND_NORMAL" onclick="App.chooseResult('FOUND_NORMAL')">✅ พบ · ปกติ</button>
-            <button type="button" class="seg seg-dmg" data-result="FOUND_DAMAGED" onclick="App.chooseResult('FOUND_DAMAGED')">🛠 พบ · ชำรุด</button>
+          <div id="resultSeg" class="result-seg three">
+            <button type="button" class="seg seg-ok" data-result="FOUND_NORMAL" onclick="App.chooseResult('FOUND_NORMAL')">✅ พบ</button>
             <button type="button" class="seg seg-no" data-result="NOT_FOUND" onclick="App.chooseResult('NOT_FOUND')">❌ ไม่พบ</button>
             <button type="button" class="seg seg-mv" data-result="MOVED" onclick="App.chooseResult('MOVED')">🚚 ย้ายออก</button>
           </div>
@@ -352,9 +356,8 @@
         <p class="hint">กรอกเฉพาะส่วนท้าย เช่น <b>26-0001</b> หรือ <b>260001</b> แล้วกดบันทึก —
           ช่องจะเคลียร์ให้กรอกตัวถัดไปทันที โดย prefix ยังคงอยู่</p>
         <p class="form-label">ผลที่ใช้บันทึก</p>
-        <div id="bulkResultSeg" class="result-seg three">
-          <button type="button" class="seg seg-ok active" data-result="FOUND_NORMAL" onclick="App.setBulkResult('FOUND_NORMAL')">✅ พบ · ปกติ</button>
-          <button type="button" class="seg seg-dmg" data-result="FOUND_DAMAGED" onclick="App.setBulkResult('FOUND_DAMAGED')">🛠 ชำรุด</button>
+        <div id="bulkResultSeg" class="result-seg">
+          <button type="button" class="seg seg-ok active" data-result="FOUND_NORMAL" onclick="App.setBulkResult('FOUND_NORMAL')">✅ พบ</button>
           <button type="button" class="seg seg-no" data-result="NOT_FOUND" onclick="App.setBulkResult('NOT_FOUND')">❌ ไม่พบ</button>
         </div>
         <label class="field"><span>ตำแหน่งที่ตรวจ</span>

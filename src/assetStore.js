@@ -242,6 +242,21 @@ const AssetStore = (function () {
     fail(error);
     return { success: true };
   }
+  /** ลบประวัติการตรวจของหลายรหัสในรอบเดียว (ใช้กับการเลือกหลายรายการ) */
+  async function deleteLogsFor(sessionId, inventoryNumbers) {
+    const list = (inventoryNumbers || []).filter(Boolean);
+    if (!sessionId || !list.length) return { deleted: 0 };
+    let deleted = 0;
+    const chunk = 100;
+    for (let i = 0; i < list.length; i += chunk) {
+      const part = list.slice(i, i + chunk);
+      const { data, error } = await getClient().from('asset_verify_log')
+        .delete().eq('session_id', sessionId).in('inventory_number', part).select('log_id');
+      fail(error);
+      deleted += (data || []).length;
+    }
+    return { deleted: deleted };
+  }
   /** รับผลตรวจใหม่จากเครื่องอื่นแบบสด เฉพาะรอบที่กำลังเปิดอยู่ */
   function subscribeLogs(sessionId, onInsert, onStatus) {
     const ch = getClient().channel('asset-verify-' + (sessionId || 'all'))
@@ -291,7 +306,7 @@ const AssetStore = (function () {
     sendPasswordReset, listProfiles, updateProfile, deleteUserAccount, confirmUserEmail,
     listSessions, createSession, updateSession, deleteSession,
     loadMaster, importAssets,
-    loadLogs, loadLogsSummary, saveVerify, deleteLog, subscribeLogs, unsubscribe,
+    loadLogs, loadLogsSummary, saveVerify, deleteLog, deleteLogsFor, subscribeLogs, unsubscribe,
     uploadPhoto, photoUrls
   };
 })();
