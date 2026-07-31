@@ -103,6 +103,18 @@ const AssetStore = (function () {
     fail(error);
     return rowsToObjs(data);
   }
+  /** ลบบัญชีถาวรผ่าน RPC admin_delete_user (ตรวจสิทธิ์ admin ฝั่ง DB) */
+  async function deleteUserAccount(id) {
+    if (!id) throw new Error('ไม่พบบัญชี');
+    const { error } = await getClient().rpc('admin_delete_user', { target: id });
+    if (error) {
+      if (/could not find|does not exist|schema cache/i.test(error.message || '')) {
+        throw new Error('ยังไม่ได้ติดตั้งฟังก์ชันลบบัญชี — รันไฟล์ auth-tools.sql ใน Supabase SQL Editor ก่อน');
+      }
+      throw new Error(error.message);
+    }
+    return { success: true };
+  }
   async function updateProfile(payload) {
     if (!payload || !payload.id) throw new Error('ไม่พบบัญชี');
     const patch = {};
@@ -266,7 +278,7 @@ const AssetStore = (function () {
   return {
     getClient, uuid,
     signIn, signOut, signUp, getSession, currentUser, getMyProfile,
-    sendPasswordReset, listProfiles, updateProfile,
+    sendPasswordReset, listProfiles, updateProfile, deleteUserAccount,
     listSessions, createSession, updateSession, deleteSession,
     loadMaster, importAssets,
     loadLogs, loadLogsSummary, saveVerify, deleteLog, subscribeLogs, unsubscribe,

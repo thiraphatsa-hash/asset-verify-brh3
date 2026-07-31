@@ -38,6 +38,8 @@ const App = (() => {
     home: { q: '', status: '', sort: 'created' },
     ui: { type: 'FIXED', view: 'table', q: '', cat: '', staff: '', status: '', sort: 'inv' },
     rec: null,
+    accessSeen: {},
+    accessTimer: null,
     scan: { active: false, paused: false, stream: null, reader: null, timer: null, lastCode: '' },
     bulk: { cat: '', resultKey: 'FOUND_NORMAL', count: 0 },
     importData: null,
@@ -289,6 +291,31 @@ const App = (() => {
     el('loginError').classList.add('hidden');
     el('loginInfo').classList.add('hidden');
   }
+  /** สลับแสดง/ซ่อนรหัสผ่าน เพื่อเช็คว่าพิมพ์ถูกไหม */
+  function togglePassword() {
+    const input = el('loginPassword');
+    const btn = el('pwToggle');
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.textContent = show ? '🙈' : '👁';
+    btn.classList.toggle('on', show);
+    input.focus();
+  }
+  function authErrorText(msg) {
+    if (/Email not confirmed/i.test(msg)) {
+      return 'อีเมลนี้ยังไม่ได้ยืนยัน — ให้ผู้ดูแลปิดสวิตช์ "Confirm email" ใน Supabase ' +
+        '(Authentication → Sign In / Providers → Email) แล้วรันไฟล์ auth-tools.sql หนึ่งครั้ง จากนั้นลองใหม่';
+    }
+    if (/Invalid login credentials/i.test(msg)) return 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
+    if (/Email logins are disabled/i.test(msg)) {
+      return 'ระบบล็อกอินด้วยอีเมลถูกปิดอยู่ — เปิดสวิตช์ "Enable Email provider" ใน Supabase ก่อน';
+    }
+    if (/User already registered/i.test(msg)) return 'อีเมลนี้สมัครไว้แล้ว — ใช้แท็บ "เข้าสู่ระบบ" แทน';
+    if (/after (\d+) seconds/i.test(msg)) {
+      return 'ส่งคำขอถี่เกินไป — รอประมาณ 1 นาทีแล้วลองใหม่ (ถ้าเพิ่งกดสมัคร แปลว่าสมัครสำเร็จไปแล้ว)';
+    }
+    return msg;
+  }
   async function submitAuth() {
     const email = el('loginEmail').value.trim();
     const password = el('loginPassword').value;
@@ -316,8 +343,7 @@ const App = (() => {
         boot();
       }
     } catch (e) {
-      errBox.textContent = /Invalid login credentials/i.test(e.message)
-        ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' : e.message;
+      errBox.textContent = authErrorText(e.message || '');
       errBox.classList.remove('hidden');
     } finally {
       btn.disabled = false;
@@ -395,7 +421,7 @@ const App = (() => {
     renderSessions();
     go('home');
     refreshAll(true);
-    if (prof.role === 'admin') loadUsers(true);
+    if (prof.role === 'admin') startAccessWatch();
   }
 
   // ── โหลดข้อมูล ─────────────────────────────────────────────────────────────
@@ -1791,17 +1817,82 @@ const App = (() => {
   }
 
   // ── จัดการบัญชี ────────────────────────────────────────────────────────────
-  async function loadUsers(silent) {
+  async function loadUsers(silent, announce) {
     if (!state.profile || state.profile.role !== 'admin') return;
     try {
       state.users = await AssetStore.listProfiles();
-      const pending = state.users.filter((u) => !u.active).length;
-      el('pendingBadge').textContent = pending;
-      el('pendingBadge').classList.toggle('hidden', !pending);
+      const pending = state.users.filter((u) => !u.active);
+      [el('pendingBadge'), el('navReqBadge')].forEach((b) => {
+        b.textContent = pending.length;
+        b.classList.toggle('hidden', !pending.length);
+      });
       if (!silent || state.page === 'manage') renderUsers();
+      // แจ้งเตือนเฉพาะคำขอที่ยังไม่เคยเห็นในเซสชันนี้
+      const fresh = pending.filter((u) => !state.accessSeen[u.id]);
+      if (announce && fresh.length) {
+        fresh.forEach((u) => { state.accessSeen[u.id] = true; });
+        showAccessReq(pending);
+        toast('มีคำขอใช้งานใหม่ ' + fresh.length + ' บัญชี', 'warn');
+        beep();
+      }
     } catch (e) {
       if (!silent) toast(e.message, 'error');
     }
+  }
+  function startAccessWatch() {
+    if (state.accessTimer) clearInterval(state.accessTimer);
+    if (!state.profile || state.profile.role !== 'admin') return;
+    loadUsers(true, true);
+    state.accessTimer = setInterval(() => {
+      if (!document.hidden) loadUsers(true, true);
+    }, 60000);
+  }
+  function showAccessReq(pending) {
+    const list = pending || state.users.filter((u) => !u.active);
+    if (!list.length) return closeAccessReq();
+    el('accessReqSub').textContent = 'รออนุมัติ ' + list.length + ' บัญชี';
+    el('accessReqList').innerHTML = list.map((u) =>
+      '<div class="user-row pending-user">' +
+      '<div class="user-main"><b>' + esc(u.fullName || u.email || '') + '</b>' +
+      '<small>' + esc(u.email || '') + ' · สมัครเมื่อ ' + esc(thaiDT(u.createdAt)) + '</small></div>' +
+      '<button class="primary-button" type="button" onclick="App.approveAccess(\'' + u.id + '\')">✓ อนุมัติ</button>' +
+      '<button class="danger-ghost" type="button" onclick="App.rejectAccess(\'' + u.id + '\',\'' +
+        esc(u.email || '') + '\')">✕ ปฏิเสธ</button>' +
+      '</div>').join('');
+    el('accessReqModal').classList.remove('hidden');
+  }
+  function closeAccessReq() { el('accessReqModal').classList.add('hidden'); }
+  async function approveAccess(id) {
+    try {
+      busy('กำลังอนุมัติ...');
+      await AssetStore.updateProfile({ id: id, role: 'counter', active: true });
+      await loadUsers(true);
+      const left = state.users.filter((u) => !u.active);
+      if (left.length) showAccessReq(left); else closeAccessReq();
+      toast('อนุมัติแล้ว — ผู้ใช้เข้าระบบได้ทันที', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+    finally { busyHide(); }
+  }
+  async function rejectAccess(id, email) {
+    if (!window.confirm('ปฏิเสธและลบบัญชี ' + (email || '') + ' ถาวร?')) return;
+    await removeUser(id);
+    const left = state.users.filter((u) => !u.active);
+    if (left.length) showAccessReq(left); else closeAccessReq();
+  }
+  async function removeUser(id) {
+    try {
+      busy('กำลังลบบัญชี...');
+      await AssetStore.deleteUserAccount(id);
+      delete state.accessSeen[id];
+      await loadUsers(true);
+      toast('ลบบัญชีแล้ว', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+    finally { busyHide(); }
+  }
+  async function deleteProfileAccount(id, email) {
+    if (!window.confirm('ลบบัญชี ' + (email || '') + ' ถาวร?\n\n' +
+      'ผลการตรวจที่บัญชีนี้เคยบันทึกไว้จะยังอยู่ครบ (เก็บชื่อผู้ตรวจเป็นข้อความ)')) return;
+    removeUser(id);
   }
   function renderUsers() {
     const me = state.profile ? state.profile.id : '';
@@ -1820,6 +1911,8 @@ const App = (() => {
         '<label class="user-active"><input type="checkbox" ' + (u.active ? 'checked' : '') +
         (self ? ' disabled' : '') +
         ' onchange="App.setUserField(\'' + u.id + '\',\'active\',this.checked)">ใช้งาน</label>' +
+        (self ? '' : '<button class="danger-ghost" type="button" title="ลบบัญชีถาวร" ' +
+          'onclick="App.deleteProfileAccount(\'' + u.id + '\',\'' + esc(u.email || '') + '\')">🗑</button>') +
         '</div>';
     }).join('') || '<p class="hint">ยังไม่มีบัญชี</p>';
   }
@@ -1917,7 +2010,8 @@ const App = (() => {
   document.addEventListener('DOMContentLoaded', init);
 
   return {
-    setAuthMode, submitAuth, logout,
+    setAuthMode, submitAuth, logout, togglePassword,
+    showAccessReq, closeAccessReq, approveAccess, rejectAccess, deleteProfileAccount,
     go, refreshAll, flushQueueNow,
     setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession,
     readMasterFile, confirmImport, cancelImport,

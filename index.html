@@ -29,7 +29,13 @@
         <button type="button" class="auth-tab" data-mode="signup" onclick="App.setAuthMode('signup')">สมัครสมาชิก</button>
       </div>
       <label>อีเมล<input id="loginEmail" name="email" type="email" autocomplete="username" required></label>
-      <label id="passwordRow">รหัสผ่าน<input id="loginPassword" name="password" type="password" autocomplete="current-password"></label>
+      <label id="passwordRow">รหัสผ่าน
+        <span class="pw-wrap">
+          <input id="loginPassword" name="password" type="password" autocomplete="current-password">
+          <button id="pwToggle" class="pw-toggle" type="button" onclick="App.togglePassword()"
+            aria-label="แสดง/ซ่อนรหัสผ่าน" title="กดเพื่อดูรหัสผ่านที่พิมพ์">👁</button>
+        </span>
+      </label>
       <div id="loginError" class="login-error hidden"></div>
       <div id="loginInfo" class="login-info hidden"></div>
       <button id="loginButton" class="primary-button full-width" type="submit">เข้าสู่ระบบ</button>
@@ -244,7 +250,7 @@
       <button id="nav-list" class="nav-btn" type="button" onclick="App.go('list')"><span>▤</span>รายการ</button>
       <button class="scan-fab" type="button" onclick="App.openScanner()" aria-label="สแกน QR"><span>▣</span></button>
       <button id="nav-dash" class="nav-btn" type="button" onclick="App.go('dash')"><span>📊</span>สรุปผล</button>
-      <button id="nav-manage" class="nav-btn hidden" type="button" onclick="App.go('manage')"><span>⚙</span>จัดการ</button>
+      <button id="nav-manage" class="nav-btn hidden" type="button" onclick="App.go('manage')"><span>⚙</span>จัดการ<span id="navReqBadge" class="nav-badge hidden">0</span></button>
     </nav>
   </div>
 
@@ -355,6 +361,21 @@
           <input id="bulkLocation" type="text" list="locList" placeholder="เช่น คลังเก็บของ โซน B"></label>
         <div id="bulkCounter" class="bulk-counter"></div>
         <div id="bulkLast" class="bulk-last"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Modal: แจ้งเตือนคำขอใช้งานใหม่ (เด้งให้ admin) ───────────────────── -->
+  <div id="accessReqModal" class="modal hidden" onclick="if(event.target===this)App.closeAccessReq()">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div><h3>🔔 มีคำขอใช้งานใหม่</h3><p id="accessReqSub"></p></div>
+        <button class="close-button" type="button" onclick="App.closeAccessReq()">✕</button>
+      </div>
+      <div class="sheet-body">
+        <p class="hint">อนุมัติแล้วผู้ใช้จะเข้าระบบได้ทันทีในบทบาท <b>counter</b> (บันทึกผลตรวจได้)
+          — ปรับบทบาทหรือแก้ชื่อที่แสดงภายหลังได้ที่หน้าจัดการ</p>
+        <div id="accessReqList" class="users-list"></div>
       </div>
     </div>
   </div>
