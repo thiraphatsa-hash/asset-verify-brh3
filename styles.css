@@ -777,6 +777,29 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
   top: calc(50% + 165px); color: #fff; font-size: 13px; text-shadow: 0 1px 4px #000;
   pointer-events: none;
 }
+/* ทางลัด: ถ่ายรูปด้วยกล้องของเครื่องแล้วให้ระบบอ่านจากรูป (แม่นกว่าภาพสด) */
+.scan-photo {
+  position: absolute; z-index: 4; left: 50%; transform: translateX(-50%);
+  bottom: calc(22px + env(safe-area-inset-bottom));
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  background: rgba(255,255,255,.94); color: #16181C; font-weight: 600; font-size: 14px;
+  border-radius: 999px; padding: 11px 18px; box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+.scan-photo:active { background: #fff; }
+.scan-tips {
+  position: absolute; z-index: 5; left: 12px; right: 12px;
+  bottom: calc(80px + env(safe-area-inset-bottom));
+  background: var(--surface); color: var(--text); border-radius: var(--r-lg);
+  padding: 13px 15px; font-size: 13px; line-height: 1.65; box-shadow: var(--shadow-lg);
+}
+.scan-tips > b { display: block; font-size: 13.5px; padding-right: 34px; }
+.tips-close {
+  position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; border-radius: 50%;
+  border: 0; background: var(--surface-2); color: var(--muted); cursor: pointer;
+  display: grid; place-items: center;
+}
+.scan-tips ul { margin: 7px 0 0; padding-left: 18px; }
+.scan-tips li { margin-bottom: 3px; }
 /* ป้ายจำนวนชิ้นเมื่อ RT code ถูกใช้ซ้ำ */
 .dup-badge {
   display: inline-block; margin-left: 4px; padding: 2px 7px; border-radius: var(--r-sm);

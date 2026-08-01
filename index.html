@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.1.0">
+  <link rel="stylesheet" href="styles.css?v=2.2.0">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -266,14 +266,29 @@
         <span id="scanStatus" class="scan-status">กำลังเปิดกล้อง...</span>
         <div class="scanner-tools">
           <button id="torchBtn" class="scan-tool hidden" type="button" onclick="App.toggleTorch()"
-            title="เปิด/ปิดไฟฉาย">💡</button>
+            title="เปิด/ปิดไฟฉาย"><span data-icon="flash"></span></button>
           <button class="close-button" type="button" onclick="App.closeScanner()"><span data-icon="close"></span></button>
         </div>
       </div>
       <video id="scanVideo" playsinline muted autoplay></video>
       <canvas id="scanCanvas" class="hidden"></canvas>
       <div class="scan-frame"></div>
-      <div id="scanHint" class="scan-hint">เล็ง QR ให้เต็มกรอบ ห่างประมาณ 15–25 ซม.</div>
+      <div id="scanHint" class="scan-hint">เล็ง QR ให้เต็มกรอบ ห่างประมาณ 20–30 ซม.</div>
+      <label class="scan-photo">
+        <input type="file" accept="image/*" capture="environment" hidden onchange="App.scanFromPhoto(event)">
+        <span data-icon="camera"></span> ถ่ายรูปให้ระบบอ่าน
+      </label>
+      <div id="scanTips" class="scan-tips hidden">
+        <button type="button" class="tips-close" onclick="App.hideScanTips()" title="ปิดคำแนะนำ">
+          <span data-icon="close"></span></button>
+        <b>ยังอ่านไม่ได้ใช่ไหม ลองแบบนี้</b>
+        <ul>
+          <li>ถือห่าง <b>20–30 ซม.</b> — ใกล้เกินไปกล้องโฟกัสไม่เข้า ภาพจะเบลอ</li>
+          <li>ให้ QR อยู่กลางจอและ<b>ไม่เอียง</b> · แสงน้อยให้กดปุ่มไฟฉาย</li>
+          <li>สติกเกอร์มันวาว ให้<b>เอียงหลบแสงสะท้อน</b> เล็กน้อย</li>
+          <li>ยังไม่ได้ให้กด <b>“ถ่ายรูปให้ระบบอ่าน”</b> — ใช้กล้องของเครื่องถ่ายแล้วอ่านจากรูป แม่นกว่ามาก</li>
+        </ul>
+      </div>
       <div id="scanNotFound" class="scan-notfound hidden">
         <p>ไม่พบรหัส <b id="nfCode"></b> ในทะเบียนรอบนี้</p>
         <div class="scan-nf-actions">
@@ -459,8 +474,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js?v=2.1.0"></script>
-  <script src="src/assetStore.js?v=2.1.0"></script>
-  <script src="app.js?v=2.1.0"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.2.0" defer></script>
+  <script src="config.js?v=2.2.0"></script>
+  <script src="src/assetStore.js?v=2.2.0"></script>
+  <script src="app.js?v=2.2.0"></script>
 </body>
 </html>

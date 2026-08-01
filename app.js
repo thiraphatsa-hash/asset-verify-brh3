@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.1.0';
+  const APP_VERSION = 'v2.2.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -30,6 +30,7 @@ const App = (() => {
     search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     bolt: '<path d="M13 3 5 13h6l-1 8 8-10h-6z"/>',
+    flash: '<path d="M12 3a5 5 0 0 1 5 5c0 1.9-1.1 2.9-1.7 4.1-.3.6-.4 1.2-.4 1.9H9.1c0-.7-.1-1.3-.4-1.9C8.1 10.9 7 9.9 7 8a5 5 0 0 1 5-5z"/><path d="M10 17.5h4M10.6 20.5h2.8"/>',
     download: '<path d="M12 4v11M8 11l4 4 4-4"/><path d="M5 19h14"/>',
     upload: '<path d="M12 20V9M8 12l4-4 4 4"/><path d="M5 4h14"/>',
     trash: '<path d="M4 6h16M9 6V4h6v2M6 6l1 14h10l1-14"/><path d="M10 10v7M14 10v7"/>',
@@ -185,7 +186,10 @@ const App = (() => {
     rec: null,
     accessSeen: {},
     accessTimer: null,
-    scan: { active: false, paused: false, stream: null, reader: null, timer: null, lastCode: '' },
+    scan: {
+      active: false, paused: false, busy: false, stream: null, reader: null, zxReader: null,
+      detector: null, timer: null, lastCode: '', frames: 0, engine: '', startedAt: 0, tipsShown: false
+    },
     bulk: { cats: [], resultKey: 'FOUND_NORMAL', count: 0, auto: true },
     importData: null,
     flushing: false,
@@ -1751,20 +1755,105 @@ const App = (() => {
   }
 
   // ── สแกน QR ────────────────────────────────────────────────────────────────
-  // อ่านจาก "กรอบกลางจอ" ที่ครอปลง canvas แล้วส่งให้ตัวถอดรหัส 2 ชั้น
-  // (BarcodeDetector ของเครื่อง → ถ้าไม่มีใช้ ZXing) วิธีนี้จับ QR เล็กได้ดีกว่า
-  // การส่งภาพเต็มเฟรม และใช้ได้ทั้ง Android/iOS
+  // ตัวถอดรหัสหลักคือ jsQR (ไฟล์อยู่ในโปรเจกต์ ใช้ได้ทุกเบราว์เซอร์รวมทั้ง iPhone
+  // และไม่ต้องมีเน็ต) · ถ้าเครื่องมี BarcodeDetector (Android Chrome) ใช้ควบคู่ไปด้วย
+  // · ZXing เป็นตัวสำรองไว้อ่านบาร์โค้ดเส้น (Code128/39) เท่านั้น
+  // แต่ละเฟรมสลับระยะซูม 3 ระดับ (เต็มภาพ → กลาง → ซูมเข้ากลางจอ) เลียนแบบกล้องของเครื่อง
+  // ที่ไล่หา QR ทั้งภาพ ทำให้จับได้ทั้ง QR ใหญ่ใกล้ๆ และ QR เล็กไกลๆ
+  const SCAN_SIZE = 720;
+  // รอบการอ่านที่หมุนสลับไปทีละเฟรม — เห็นทั้งภาพก่อน แล้วค่อยซูมเข้าหากลางจอ
+  // เพิ่มรอบ "ดันคอนทราสต์" ไว้ช่วยกรณีสติกเกอร์สะท้อนแสงหรือแสงน้อย
+  const SCAN_PASSES = [
+    { full: true },
+    { zoom: 0.6 },
+    { full: true, boost: true },
+    { zoom: 0.38 },
+    { zoom: 0.6, boost: true }
+  ];
   function setScanStatus(text) { el('scanStatus').textContent = text; }
+  /**
+   * ดึงคอนทราสต์ภาพให้ชัดขึ้นก่อนถอดรหัส (ยืดช่วงเทาที่ใช้จริงให้เต็ม 0-255)
+   * ช่วยกรณีแสงสะท้อนบนสติกเกอร์หรือถ่ายในที่มืด ซึ่งภาพจะเทาจนตัวถอดรหัสแยกไม่ออก
+   */
+  function boostContrast(img) {
+    const d = img.data;
+    let lo = 255;
+    let hi = 0;
+    for (let i = 0; i < d.length; i += 40) {          // สุ่มดูทุก 10 พิกเซลพอ
+      const g = (d[i] * 306 + d[i + 1] * 601 + d[i + 2] * 117) >> 10;
+      if (g < lo) lo = g;
+      if (g > hi) hi = g;
+    }
+    if (hi - lo < 12) return img;                     // ภาพเรียบเกินไป ยืดแล้วยิ่งเละ
+    const scale = 255 / (hi - lo);
+    for (let i = 0; i < d.length; i += 4) {
+      let g = (d[i] * 306 + d[i + 1] * 601 + d[i + 2] * 117) >> 10;
+      g = (g - lo) * scale;
+      g = g < 0 ? 0 : (g > 255 ? 255 : g);
+      d[i] = d[i + 1] = d[i + 2] = g;
+    }
+    return img;
+  }
+  /** อ่าน QR จาก ImageData ด้วย jsQR (ลองทั้งภาพปกติและภาพกลับสี) */
+  function decodeQR(img) {
+    if (!window.jsQR) return '';
+    try {
+      const r = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
+      return r && r.data ? String(r.data) : '';
+    } catch (e) { return ''; }
+  }
+  /** อ่านบาร์โค้ดเส้นด้วย ZXing (ใช้ API ระดับล่าง — decodeFromCanvas ไม่มีจริงใน build นี้) */
+  function decodeBarcode1D(img) {
+    const Z = window.ZXing;
+    if (!Z || !Z.RGBLuminanceSource || !Z.BinaryBitmap || !Z.HybridBinarizer || !Z.MultiFormatReader) return '';
+    try {
+      const w = img.width;
+      const h = img.height;
+      const data = img.data;
+      const lum = new Uint8ClampedArray(w * h);
+      for (let i = 0, p = 0; p < lum.length; i += 4, p++) {
+        lum[p] = (data[i] * 306 + data[i + 1] * 601 + data[i + 2] * 117) >> 10;
+      }
+      const bitmap = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.RGBLuminanceSource(lum, w, h)));
+      const reader = state.scan.zxReader;
+      const res = reader.decode(bitmap);
+      return res ? res.getText() : '';
+    } catch (e) { return ''; }
+  }
+  /** เตรียม ZXing ไว้อ่านบาร์โค้ดเส้น — ล้มเหลวก็ไม่เป็นไร QR ยังอ่านได้ด้วย jsQR */
+  async function prepareBarcode1D() {
+    if (state.scan.zxReader) return;
+    try {
+      await ensureLibrary('zxing');
+      const Z = window.ZXing;
+      if (!Z || !Z.MultiFormatReader) return;
+      const reader = new Z.MultiFormatReader();
+      if (Z.DecodeHintType && Z.BarcodeFormat) {
+        const hints = new Map();
+        hints.set(Z.DecodeHintType.TRY_HARDER, true);
+        hints.set(Z.DecodeHintType.POSSIBLE_FORMATS,
+          [Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.CODE_39, Z.BarcodeFormat.ITF, Z.BarcodeFormat.EAN_13]);
+        reader.setHints(hints);
+      }
+      state.scan.zxReader = reader;
+    } catch (e) { /* ไม่มีเน็ต/โหลดไม่ได้ = ใช้ jsQR อย่างเดียว */ }
+  }
   async function openScanner() {
     if (!state.canWrite) return;
     if (!state.activeSession) return toast('เลือกรอบตรวจก่อนเริ่มสแกน', 'warn');
     el('scannerModal').classList.remove('hidden');
     el('scanNotFound').classList.add('hidden');
+    el('scanTips').classList.add('hidden');
     el('torchBtn').classList.add('hidden');
     state.scan.active = true;
     state.scan.paused = false;
+    state.scan.busy = false;
     state.scan.frames = 0;
     state.scan.torchOn = false;
+    state.scan.detector = null;
+    state.scan.engine = '';
+    state.scan.tipsShown = false;
+    state.scan.startedAt = Date.now();
     setScanStatus('กำลังเปิดกล้อง...');
     try {
       if (!window.isSecureContext) throw new Error('กล้องใช้ได้เฉพาะเมื่อเปิดผ่าน https');
@@ -1802,6 +1891,9 @@ const App = (() => {
       setScanStatus(/denied|permission|NotAllowed/i.test(e.message || e.name || '')
         ? 'ไม่ได้รับอนุญาตใช้กล้อง — เปิดสิทธิ์กล้องของเว็บนี้ในเบราว์เซอร์'
         : 'เปิดกล้องไม่ได้: ' + (e.message || e.name));
+      // เปิดกล้องสดไม่ได้ก็ยังถ่ายรูปให้ระบบอ่านได้
+      el('scanTips').classList.remove('hidden');
+      state.scan.tipsShown = true;
     }
   }
   /** ไฟฉาย (Android Chrome รองรับ · iOS Safari ยังไม่รองรับ ปุ่มจะไม่ขึ้น) */
@@ -1841,59 +1933,163 @@ const App = (() => {
   async function startDecodeLoop(video) {
     const canvas = el('scanCanvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const SIZE = 560;
-    canvas.width = SIZE;
-    canvas.height = SIZE;
+    canvas.width = SCAN_SIZE;
+    canvas.height = SCAN_SIZE;
 
-    let detector = null;
     if ('BarcodeDetector' in window) {
       try {
         const supported = await window.BarcodeDetector.getSupportedFormats();
         const want = ['qr_code', 'code_128', 'code_39'].filter((f) => supported.indexOf(f) >= 0);
-        detector = new window.BarcodeDetector(want.length ? { formats: want } : undefined);
-      } catch (e) { detector = null; }
+        if (want.length) state.scan.detector = new window.BarcodeDetector({ formats: want });
+      } catch (e) { state.scan.detector = null; }
     }
-    let zxing = null;
-    if (!detector) {
-      await ensureLibrary('zxing');
-      const hints = new Map();
-      if (window.ZXing.DecodeHintType) {
-        hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
-        if (window.ZXing.BarcodeFormat) {
-          hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS,
-            [window.ZXing.BarcodeFormat.QR_CODE, window.ZXing.BarcodeFormat.CODE_128,
-              window.ZXing.BarcodeFormat.CODE_39]);
-        }
-      }
-      zxing = new window.ZXing.BrowserMultiFormatReader(hints);
-      state.scan.reader = zxing;
+    if (!window.jsQR && !state.scan.detector) {
+      setScanStatus('ตัวอ่าน QR ยังไม่พร้อม — รีเฟรชหน้าเว็บหนึ่งครั้ง');
     }
-    setScanStatus('กล้องพร้อม (' + (detector ? 'ตัวอ่านของเครื่อง' : 'ZXing') + ') — เล็ง QR ในกรอบ');
+    state.scan.engine = (state.scan.detector ? 'ตัวอ่านของเครื่อง' : '') +
+      (state.scan.detector && window.jsQR ? '+' : '') + (window.jsQR ? 'jsQR' : '');
+    prepareBarcode1D();                            // สำรองไว้อ่านบาร์โค้ดเส้น ไม่ต้องรอ
+    setScanStatus('กล้องพร้อม — เล็ง QR ในกรอบ');
 
-    state.scan.timer = setInterval(async () => {
-      if (!state.scan.active || state.scan.paused) return;
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
-      if (!vw || !vh) return;
-      // ครอปสี่เหลี่ยมจัตุรัสกลางภาพ ~70% ให้ตรงกับกรอบส้มบนจอ
-      const side = Math.round(Math.min(vw, vh) * 0.7);
-      const sx = Math.round((vw - side) / 2);
-      const sy = Math.round((vh - side) / 2);
-      ctx.drawImage(video, sx, sy, side, side, 0, 0, SIZE, SIZE);
-      state.scan.frames++;
-      if (state.scan.frames % 20 === 0) {
-        setScanStatus('กำลังอ่าน... (' + vw + '×' + vh + ' · ' + state.scan.frames + ' เฟรม)');
-      }
+    state.scan.timer = setInterval(() => {
+      if (!state.scan.active || state.scan.paused || state.scan.busy) return;
+      state.scan.busy = true;
+      scanOneFrame(video, canvas, ctx)
+        .catch(() => {})
+        .then(() => { state.scan.busy = false; });
+    }, 130);
+  }
+  async function scanOneFrame(video, canvas, ctx) {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return;
+    const pass = SCAN_PASSES[state.scan.frames % SCAN_PASSES.length];
+    if (pass.full) {
+      // ทั้งเฟรมโดยไม่ตัดขอบ — QR ที่อยู่ริมจอก็ยังอ่านเจอ
+      const scale = Math.min(SCAN_SIZE / vw, SCAN_SIZE / vh, 1);
+      canvas.width = Math.max(2, Math.round(vw * scale));
+      canvas.height = Math.max(2, Math.round(vh * scale));
+      ctx.drawImage(video, 0, 0, vw, vh, 0, 0, canvas.width, canvas.height);
+    } else {
+      // ซูมดิจิทัลเข้าหากลางจอจากภาพความละเอียดเต็ม — จับ QR เล็กๆ ไกลๆ ได้
+      const side = Math.round(Math.min(vw, vh) * pass.zoom);
+      canvas.width = SCAN_SIZE;
+      canvas.height = SCAN_SIZE;
+      ctx.drawImage(video, Math.round((vw - side) / 2), Math.round((vh - side) / 2),
+        side, side, 0, 0, SCAN_SIZE, SCAN_SIZE);
+    }
+    state.scan.frames++;
+    if (state.scan.frames % 12 === 0) {
+      setScanStatus('กำลังอ่าน... (' + vw + '×' + vh + ' · ' + state.scan.engine +
+        ' · ' + state.scan.frames + ' เฟรม)');
+    }
+    showScanTips();
+    if (state.scan.detector && !pass.boost) {
       try {
-        if (detector) {
-          const codes = await detector.detect(canvas);
-          if (codes && codes.length) return onScanDecode(codes[0].rawValue);
-        } else if (zxing) {
-          const result = zxing.decodeFromCanvas(canvas);
-          if (result) return onScanDecode(result.getText());
-        }
-      } catch (e) { /* ไม่เจอในเฟรมนี้ = ปกติ */ }
-    }, 180);
+        const codes = await state.scan.detector.detect(canvas);
+        if (codes && codes.length) return onScanDecode(codes[0].rawValue);
+      } catch (e) { /* เฟรมนี้ไม่เจอ = ปกติ */ }
+      if (!state.scan.active || state.scan.paused) return;
+    }
+    let img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    if (pass.boost) img = boostContrast(img);
+    const qr = decodeQR(img);
+    if (qr) return onScanDecode(qr);
+    if (state.scan.zxReader && state.scan.frames % 4 === 0) {
+      const bc = decodeBarcode1D(img);
+      if (bc) return onScanDecode(bc);
+    }
+  }
+  /** อ่านไม่ได้สักทีให้บอกวิธีแก้ (ระยะ/แสง/ถ่ายรูปแทน) แทนที่จะปล่อยให้เล็งไปเรื่อยๆ */
+  function showScanTips() {
+    if (state.scan.tipsShown) return;
+    if (Date.now() - state.scan.startedAt < 8000) return;
+    state.scan.tipsShown = true;
+    el('scanTips').classList.remove('hidden');
+  }
+  function hideScanTips() { el('scanTips').classList.add('hidden'); }
+  // ── ทางลัดเมื่อสแกนสดไม่ผ่าน: ถ่ายรูปด้วยกล้องของเครื่องแล้วให้ระบบอ่านจากรูป ──
+  // กล้องของเครื่องโฟกัส/ปรับแสงเก่งกว่าภาพสดในเบราว์เซอร์ และได้ภาพความละเอียดเต็ม
+  function loadImageFile(file) {
+    if (window.createImageBitmap) {
+      return createImageBitmap(file).catch(() => loadImageViaUrl(file));
+    }
+    return loadImageViaUrl(file);
+  }
+  function loadImageViaUrl(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const im = new Image();
+      im.onload = () => { URL.revokeObjectURL(url); resolve(im); };
+      im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('เปิดไฟล์รูปไม่ได้')); };
+      im.src = url;
+    });
+  }
+  /** ไล่อ่านรูปนิ่งหลายระยะที่ความละเอียดสูงกว่าภาพสด (รูปจากกล้องเครื่องคมกว่ามาก) */
+  async function decodeStill(bmp) {
+    const w = bmp.width || bmp.naturalWidth;
+    const h = bmp.height || bmp.naturalHeight;
+    if (!w || !h) return '';
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const SIZE = 1100;
+    const passes = [
+      { full: true }, { zoom: 0.6 }, { full: true, boost: true },
+      { zoom: 0.35 }, { zoom: 0.6, boost: true }
+    ];
+    for (let i = 0; i < passes.length; i++) {
+      const p = passes[i];
+      if (p.full) {
+        const scale = Math.min(SIZE / w, SIZE / h, 1);
+        canvas.width = Math.max(2, Math.round(w * scale));
+        canvas.height = Math.max(2, Math.round(h * scale));
+        ctx.drawImage(bmp, 0, 0, w, h, 0, 0, canvas.width, canvas.height);
+      } else {
+        const side = Math.round(Math.min(w, h) * p.zoom);
+        canvas.width = SIZE;
+        canvas.height = SIZE;
+        ctx.drawImage(bmp, Math.round((w - side) / 2), Math.round((h - side) / 2),
+          side, side, 0, 0, SIZE, SIZE);
+      }
+      if (state.scan.detector && !p.boost) {
+        try {
+          const codes = await state.scan.detector.detect(canvas);
+          if (codes && codes.length) return codes[0].rawValue;
+        } catch (e) {}
+      }
+      let img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      if (p.boost) img = boostContrast(img);
+      const qr = decodeQR(img);
+      if (qr) return qr;
+      if (state.scan.zxReader) {
+        const bc = decodeBarcode1D(img);
+        if (bc) return bc;
+      }
+    }
+    return '';
+  }
+  async function scanFromPhoto(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';                          // เลือกรูปเดิมซ้ำได้
+    if (!file) return;
+    if (!state.scan.detector && !window.jsQR) return toast('ตัวอ่าน QR ยังไม่พร้อม — รีเฟรชหน้าเว็บ', 'error');
+    setScanStatus('กำลังอ่านรูป...');
+    state.scan.paused = true;
+    try {
+      const bmp = await loadImageFile(file);
+      const text = await decodeStill(bmp);
+      if (bmp.close) bmp.close();
+      if (!text) {
+        state.scan.paused = false;
+        setScanStatus('อ่านรูปไม่ออก — ถ่ายใหม่ให้ QR ใหญ่เต็มกรอบและชัด');
+        return toast('อ่าน QR จากรูปไม่ได้ — ถ่ายให้ QR ใหญ่ขึ้น ชัดขึ้น และไม่สะท้อนแสง', 'warn');
+      }
+      state.scan.paused = false;
+      onScanDecode(text);
+    } catch (e) {
+      state.scan.paused = false;
+      setScanStatus('อ่านรูปไม่ได้: ' + (e.message || e.name));
+    }
   }
   function onScanDecode(text) {
     if (!state.scan.active || state.scan.paused) return;
@@ -1926,6 +2122,8 @@ const App = (() => {
   function closeScanner() {
     state.scan.active = false;
     state.scan.paused = false;
+    state.scan.busy = false;
+    state.scan.detector = null;
     if (state.scan.timer) { clearInterval(state.scan.timer); state.scan.timer = null; }
     if (state.scan.reader) { try { state.scan.reader.reset(); } catch (e) {} state.scan.reader = null; }
     if (state.scan.torchOn && state.scan.track) {
@@ -3105,7 +3303,8 @@ const App = (() => {
     clearSelection, applySelection, quickSave, deleteSelectedHistory, setTheme,
     openAsset, closeRecord, chooseResult, saveRecord,
     addPhotos, removePhoto, viewPhoto, deleteLogEntry,
-    openScanner, closeScanner, resumeScan, scanUnlisted, toggleTorch, dupChoose,
+    openScanner, closeScanner, resumeScan, scanUnlisted, toggleTorch, scanFromPhoto,
+    hideScanTips, dupChoose,
     openBulk, closeBulk, setBulkResult, bulkSubmit, pickChoose,
     toggleCatPicker, closeCatPicker, renderCatPicker, toggleCat, pickAllCats,
     formatBulkTail, insertYY, setBulkAuto,
