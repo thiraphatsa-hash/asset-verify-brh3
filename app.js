@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.2.0';
+  const APP_VERSION = 'v2.3.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -188,7 +188,8 @@ const App = (() => {
     accessTimer: null,
     scan: {
       active: false, paused: false, busy: false, stream: null, reader: null, zxReader: null,
-      detector: null, timer: null, lastCode: '', frames: 0, engine: '', startedAt: 0, tipsShown: false
+      detector: null, timer: null, lastCode: '', lastRaw: '', frames: 0, engine: '',
+      startedAt: 0, tipsShown: false
     },
     bulk: { cats: [], resultKey: 'FOUND_NORMAL', count: 0, auto: true },
     importData: null,
@@ -412,6 +413,69 @@ const App = (() => {
       l.pieces = set ? set.size : 1;
     });
     state.latest = map;
+    rebuildIdIndex();
+  }
+  /**
+   * ดัชนีรหัสทุกแบบที่อาจอยู่ใน QR — สติกเกอร์ของจริงบางแบบเก็บแค่ **Asset Number**
+   * (เช่น 301013807) ไม่ใช่ RT code จึงต้องจับคู่ได้ทั้ง RT code / Asset Number /
+   * Material / Serial และเลขที่ตัดศูนย์นำหน้าออกแล้ว
+   */
+  function rebuildIdIndex() {
+    const idx = new Map();
+    const put = (key, inv) => {
+      const k = String(key == null ? '' : key).trim().toUpperCase();
+      if (k.length < 3) return;
+      const list = idx.get(k) || [];
+      if (list.indexOf(inv) < 0) list.push(inv);
+      idx.set(k, list);
+    };
+    state.master.forEach((a) => {
+      const inv = a.inventoryNumber;
+      if (!inv) return;
+      put(inv, inv);
+      put(String(inv).replace(/-/g, ''), inv);
+      [a.assetNumber, a.materialCode, a.serialNumber].forEach((v) => {
+        if (v === undefined || v === null || v === '') return;
+        const s = String(v).trim();
+        put(s, inv);
+        const nz = s.replace(/^0+/, '');
+        if (nz && nz !== s) put(nz, inv);
+      });
+      if (a.assetNumber && a.subNumber !== undefined && a.subNumber !== '') {
+        put(String(a.assetNumber).trim() + '-' + String(a.subNumber).trim(), inv);
+      }
+    });
+    state.idIndex = idx;
+  }
+  /**
+   * หาทรัพย์สินจากข้อความที่สแกนได้ — รองรับทั้ง RT code, Asset Number, Material,
+   * Serial และ payload ยาวๆ (เช่น "Asset: 301013807 RT-DESK-26-0007" หรือ URL)
+   * คืนรายการที่ตรง (ปกติ 1 รายการ · ถ้าเลขนั้นซ้ำหลายรายการจะให้ผู้ใช้เลือก)
+   */
+  function matchScanned(raw) {
+    const text = String(raw || '').toUpperCase().replace(/[–—]/g, '-').trim();
+    if (!text) return [];
+    const idx = state.idIndex || new Map();
+    const found = [];
+    const lookup = (key) => {
+      (idx.get(String(key).trim().toUpperCase()) || []).forEach((inv) => {
+        if (found.indexOf(inv) < 0) found.push(inv);
+      });
+    };
+    const rt = text.match(INV_RE);                 // 1) RT code เต็ม (ตรงๆ หรือฝังในข้อความ)
+    if (rt) lookup(rt[0]);
+    if (!found.length) lookup(text);               // 2) ทั้งก้อนตรงกับรหัสใดรหัสหนึ่ง
+    if (!found.length) {                           // 3) ไล่ทีละคำ — QR เก็บหลายค่าหรือเป็น URL
+      text.split(/[^A-Z0-9]+/).forEach((tok) => {
+        if (tok.length < 4) return;
+        lookup(tok);
+        const nz = tok.replace(/^0+/, '');
+        if (nz && nz !== tok) lookup(nz);
+      });
+    }
+    return found
+      .map((inv) => state.master.find((a) => a.inventoryNumber === inv))
+      .filter(Boolean);
   }
   function addLogLocal(log) {
     if (!log || !log.logId) return;
@@ -1844,6 +1908,7 @@ const App = (() => {
     el('scannerModal').classList.remove('hidden');
     el('scanNotFound').classList.add('hidden');
     el('scanTips').classList.add('hidden');
+    el('scanPhotoBtn').classList.remove('hidden');
     el('torchBtn').classList.add('hidden');
     state.scan.active = true;
     state.scan.paused = false;
@@ -2091,26 +2156,41 @@ const App = (() => {
       setScanStatus('อ่านรูปไม่ได้: ' + (e.message || e.name));
     }
   }
-  function onScanDecode(text) {
+  async function onScanDecode(text) {
     if (!state.scan.active || state.scan.paused) return;
     state.scan.paused = true;
     beep();
-    const code = normalizeCode(text);
-    state.scan.lastCode = code || String(text || '').trim().slice(0, 60);
-    if (!code) return showScanNotFound();
-    const asset = state.master.find((a) => a.inventoryNumber === code);
-    if (!asset) return showScanNotFound();
-    setScanStatus('เจอ ' + code);
+    const raw = String(text || '').trim();
+    state.scan.lastRaw = raw;
+    state.scan.lastCode = normalizeCode(raw) || raw.slice(0, 60);
+    const hits = matchScanned(raw);
+    if (!hits.length) return showScanNotFound();
+    let asset = hits[0];
+    if (hits.length > 1) {
+      // เลขนี้ตรงกับทรัพย์สินหลายรายการในทะเบียน (เช่น Asset Number เดียวกันหลาย Sub)
+      const code = await pickCode(hits.map((h) => h.inventoryNumber));
+      if (!code) return resumeScan();
+      asset = hits.find((h) => h.inventoryNumber === code) || hits[0];
+    }
+    setScanStatus('เจอ ' + asset.inventoryNumber);
     openRecord(asset, 'SCAN', true);
+    // QR ที่ไม่ได้เก็บ RT code ตรงๆ (เก็บ Asset Number) ให้บอกว่าจับคู่มาจากอะไร
+    if (raw.toUpperCase().indexOf(asset.inventoryNumber) < 0) {
+      toast('QR อ่านได้ "' + raw.slice(0, 30) + '" → ตรงกับ ' + asset.inventoryNumber, 'success');
+    }
   }
   function showScanNotFound() {
     el('nfCode').textContent = state.scan.lastCode;
+    el('nfRaw').textContent = state.scan.lastRaw || '(ว่าง)';
     el('scanNotFound').classList.remove('hidden');
+    el('scanPhotoBtn').classList.add('hidden');     // กันปุ่มทับปุ่มในกล่องแจ้งเตือน
+    el('scanTips').classList.add('hidden');
     setScanStatus('ไม่พบในทะเบียนรอบนี้');
   }
   function resumeScan() {
     if (!state.scan.active) return;
     el('scanNotFound').classList.add('hidden');
+    el('scanPhotoBtn').classList.remove('hidden');
     setScanStatus('กล้องพร้อม — เล็ง QR Code ในกรอบ');
     setTimeout(() => { state.scan.paused = false; }, 700);
   }
@@ -2120,6 +2200,8 @@ const App = (() => {
     openUnlisted(code, 'SCAN');
   }
   function closeScanner() {
+    // ปิดกล้องระหว่างที่ยังถามว่าเลขนี้คือรายการไหน — ปิดกล่องคำถามไปด้วย
+    if (state.pickResolve) state.pickResolve(null);
     state.scan.active = false;
     state.scan.paused = false;
     state.scan.busy = false;

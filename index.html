@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.2.0">
+  <link rel="stylesheet" href="styles.css?v=2.3.0">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -274,7 +274,7 @@
       <canvas id="scanCanvas" class="hidden"></canvas>
       <div class="scan-frame"></div>
       <div id="scanHint" class="scan-hint">เล็ง QR ให้เต็มกรอบ ห่างประมาณ 20–30 ซม.</div>
-      <label class="scan-photo">
+      <label id="scanPhotoBtn" class="scan-photo">
         <input type="file" accept="image/*" capture="environment" hidden onchange="App.scanFromPhoto(event)">
         <span data-icon="camera"></span> ถ่ายรูปให้ระบบอ่าน
       </label>
@@ -290,7 +290,8 @@
         </ul>
       </div>
       <div id="scanNotFound" class="scan-notfound hidden">
-        <p>ไม่พบรหัส <b id="nfCode"></b> ในทะเบียนรอบนี้</p>
+        <p>ไม่พบ <b id="nfCode"></b> ในทะเบียนรอบนี้ (หา RT code · Asset Number · Material · Serial แล้ว)</p>
+        <p class="nf-raw">ค่าที่อ่านได้จาก QR: <b id="nfRaw" class="mono"></b></p>
         <div class="scan-nf-actions">
           <button class="outline-button" type="button" onclick="App.resumeScan()">สแกนต่อ</button>
           <button class="primary-button" type="button" onclick="App.scanUnlisted()">บันทึกนอกทะเบียน</button>
@@ -474,9 +475,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.2.0" defer></script>
-  <script src="config.js?v=2.2.0"></script>
-  <script src="src/assetStore.js?v=2.2.0"></script>
-  <script src="app.js?v=2.2.0"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.3.0" defer></script>
+  <script src="config.js?v=2.3.0"></script>
+  <script src="src/assetStore.js?v=2.3.0"></script>
+  <script src="app.js?v=2.3.0"></script>
 </body>
 </html>
