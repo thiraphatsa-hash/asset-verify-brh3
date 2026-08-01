@@ -2254,6 +2254,10 @@ const App = (() => {
     flushQueue();
   }
   function closeBulk() {
+    // ปิดกลางคันตอนกำลังถามหมวด/ถามจำนวนชิ้น — ปลดค้างให้เรียบร้อยก่อน
+    if (state.pickResolve) state.pickResolve(null);
+    if (state.dupResolve) state.dupResolve(null);
+    state.bulk.busy = false;
     el('bulkModal').classList.add('hidden');
     updateSyncChip();
   }
