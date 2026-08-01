@@ -796,6 +796,16 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 .dup-btn.dup-new:hover { background: var(--ok-bg); }
 .dup-btn.dup-new b { color: var(--ok); }
 .dup-btn.dup-edit:hover { background: var(--accent-tint); border-color: var(--accent); }
+/* เลือกหมวดเมื่อเลขท้ายตรงกันหลายหมวด — มีเลขกำกับให้กดจากคีย์บอร์ดได้ */
+.pick-btn { flex-direction: row; align-items: center; gap: 12px; }
+.pick-btn:hover { border-color: var(--accent); background: var(--accent-tint); }
+.pick-num {
+  width: 30px; height: 30px; flex: none; border-radius: 8px; display: grid; place-items: center;
+  background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 14px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.pick-body { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; min-width: 0; }
+.pick-body .pill { font-size: 11.5px; }
 .scan-notfound {
   position: absolute; left: 12px; right: 12px;
   bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 3;
@@ -882,6 +892,15 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 .cat-chip button:hover { opacity: 1; }
 .bulk-prefix.multi { font-size: 13px; letter-spacing: .04em; }
 
+/* บอกล่วงหน้าว่าเลขที่พิมพ์อยู่จะลงหมวดไหน */
+.bulk-match {
+  margin: 8px 0 0; font-size: 13px; line-height: 1.5; min-height: 20px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--muted);
+}
+.bulk-match .ic { flex: none; }
+.bulk-match.ok { color: var(--ok); }
+.bulk-match.warn { color: var(--dmg); font-weight: 600; }
+.bulk-match.bad { color: var(--no); font-weight: 600; }
 .bulk-opts { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .auto-chip {
   display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);

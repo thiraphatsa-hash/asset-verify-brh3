@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.0.0';
+  const APP_VERSION = 'v2.1.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -1968,6 +1968,8 @@ const App = (() => {
     renderCatPicker();
     el('bulkLocation').value = cacheGet('avLastLocation') || '';
     el('bulkLast').textContent = '';
+    el('bulkTail').value = '';
+    state.bulk.busy = false;
     const auto = cacheGet('avBulkAuto');
     state.bulk.auto = auto === null ? true : Boolean(auto);
     el('bulkAuto').checked = state.bulk.auto;
@@ -2070,6 +2072,7 @@ const App = (() => {
       (cats.length === 1 ? ' รายการในหมวดนี้' : ' รายการใน ' + cats.length + ' หมวดที่เลือก') +
       (state.bulk.count ? ' · รอบนี้ ' + state.bulk.count + ' รายการ' : '');
     updateCatLabel();
+    updateTailHint();
   }
   /**
    * แปลงเลขท้ายเป็น RT code — รองรับเลือกหลายหมวดพร้อมกัน
@@ -2091,27 +2094,83 @@ const App = (() => {
     if (exist.length > 1) return { candidates: exist };
     return { code: all[0], missing: all };
   }
-  /** ถามว่าเลขท้ายนี้หมายถึงหมวดไหน (เมื่อมีอยู่จริงมากกว่า 1 หมวด) */
+  /** ชื่อหมวดจาก RT code (RT-APRX-26-0001 → APRX) */
+  function catOf(code) { return String(code || '').split('-')[1] || '?'; }
+  /**
+   * ถามว่าเลขท้ายนี้หมายถึงหมวดไหน (เมื่อมีอยู่จริงมากกว่า 1 หมวด)
+   * ระบบไม่เลือกให้เอง — เรียงตามชื่อหมวดเสมอ ลำดับปุ่มจะได้ไม่สลับไปมา
+   */
   function pickCode(candidates) {
     return new Promise((resolve) => {
-      el('pickSub').textContent = 'เลขท้ายนี้มีอยู่ใน ' + candidates.length + ' หมวด — เลือกที่ต้องการบันทึก';
-      el('pickList').innerHTML = candidates.map((code) => {
+      const list = candidates.slice().sort();
+      state.pickKeys = list;
+      el('pickSub').textContent = 'เลขท้ายนี้มีอยู่จริง ' + list.length +
+        ' หมวด — ระบบไม่เดาให้ เลือกหมวดที่กำลังตรวจอยู่ (กดเลข 1-' + list.length + ' ก็ได้)';
+      el('pickList').innerHTML = list.map((code, i) => {
         const a = state.master.find((x) => x.inventoryNumber === code);
         const l = state.latest.get(code);
-        return '<button class="dup-btn" type="button" data-code="' + esc(code) + '">' +
-          '<b class="mono">' + esc(code) + '</b>' +
-          '<small>' + esc(a ? (a.description || '') : '') +
-          (l ? ' · ' + esc(statusLabel(l)) : ' · ยังไม่ตรวจ') + '</small></button>';
-      }).join('') + '<button class="outline-button" type="button" data-code="">ยกเลิก</button>';
+        const pieces = piecesOf(code).length;
+        return '<button class="dup-btn pick-btn" type="button" data-code="' + esc(code) + '">' +
+          '<span class="pick-num">' + (i + 1) + '</span>' +
+          '<span class="pick-body">' +
+            '<b class="mono">' + esc(code) + '</b>' +
+            '<small>' + esc(a && a.description ? a.description : '(ไม่มีคำอธิบาย)') + '</small>' +
+            '<span class="pill st-' + (l ? classify(l) : 'pending') + '">' +
+            (l ? esc(statusLabel(l)) + (pieces > 1 ? ' · ' + pieces + ' ชิ้น' : '') : 'ยังไม่ตรวจ') +
+            '</span>' +
+          '</span></button>';
+      }).join('') + '<button class="outline-button" type="button" data-code="">ยกเลิก (Esc)</button>';
       state.pickResolve = (v) => {
+        document.removeEventListener('keydown', onPickKey, true);
         el('pickModal').classList.add('hidden');
         state.pickResolve = null;
+        state.pickKeys = null;
         resolve(v);
       };
+      document.addEventListener('keydown', onPickKey, true);
       el('pickModal').classList.remove('hidden');
+      try { el('bulkTail').blur(); } catch (e) {}   // กันเลขที่กดเลือกหลุดลงช่องกรอก
     });
   }
+  /** กดเลข 1-9 เลือกหมวด · Esc ยกเลิก (ให้ตรวจต่อเนื่องได้เร็วโดยไม่ต้องละมือ) */
+  function onPickKey(ev) {
+    if (!state.pickResolve || !state.pickKeys) return;
+    if (ev.key === 'Escape') { ev.preventDefault(); return pickChoose(null); }
+    const n = parseInt(ev.key, 10);
+    if (n >= 1 && n <= state.pickKeys.length) {
+      ev.preventDefault();
+      pickChoose(state.pickKeys[n - 1]);
+    }
+  }
   function pickChoose(code) { if (state.pickResolve) state.pickResolve(code || null); }
+  /** บอกล่วงหน้าว่าเลขที่พิมพ์อยู่จะไปลงหมวดไหน — ไม่ต้องรอกดบันทึกถึงจะรู้ */
+  function updateTailHint() {
+    const box = el('bulkMatch');
+    if (!box) return;
+    const raw = String(el('bulkTail').value || '').trim();
+    box.className = 'bulk-match';
+    if (!raw) { box.innerHTML = ''; return; }
+    const hit = bulkCodesFromTail(raw);
+    if (hit.candidates) {
+      box.className = 'bulk-match warn';
+      box.innerHTML = icon('alert') + ' เลขนี้มีอยู่ ' + hit.candidates.length + ' หมวด (' +
+        esc(hit.candidates.slice().sort().map(catOf).join(', ')) + ') — กดบันทึกแล้วเลือกหมวดก่อน';
+      return;
+    }
+    if (hit.missing) {
+      box.className = 'bulk-match bad';
+      box.innerHTML = icon('close') + ' ไม่พบเลขนี้ในหมวดที่เลือก (' +
+        esc(hit.missing.map(catOf).join(', ')) + ')';
+      return;
+    }
+    if (!hit.code) { box.innerHTML = ''; return; }
+    const a = state.master.find((x) => x.inventoryNumber === hit.code);
+    const l = state.latest.get(hit.code);
+    box.className = 'bulk-match ok';
+    box.innerHTML = icon('check') + ' จะบันทึกเป็น <b class="mono">' + esc(hit.code) + '</b>' +
+      (a && a.description ? ' · ' + esc(a.description) : '') +
+      (l ? ' · <b>ตรวจแล้ว (' + esc(statusLabel(l)) + ')</b>' : '');
+  }
   /**
    * จัดรูปแบบช่องกรอกเลขท้ายให้เอง: พิมพ์ 262222 → แสดง 26-2222
    * (เก็บเฉพาะ A-Z 0-9 สูงสุด 6 ตัว แล้วแทรกขีดหลังตัวที่ 2)
@@ -2120,6 +2179,7 @@ const App = (() => {
   function formatBulkTail(input) {
     const raw = String(input.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
     input.value = raw.length > 2 ? raw.slice(0, 2) + '-' + raw.slice(2) : raw;
+    updateTailHint();
     clearTimeout(bulkAutoTimer);
     if (state.bulk.auto && raw.length === 6) {
       // ครบ 2+4 ตัวแล้วบันทึกให้เอง (แป้นตัวเลขบนมือถือไม่มีปุ่ม Enter)
@@ -2142,7 +2202,18 @@ const App = (() => {
     cacheSet('avBulkAuto', state.bulk.auto);
     el('bulkTail').focus();
   }
+  /** กันบันทึกซ้อน: ระหว่างที่ยังถามหมวด/ถามจำนวนชิ้นอยู่ ห้ามเริ่มรอบใหม่ */
   async function bulkSubmit() {
+    if (state.bulk.busy) return;
+    state.bulk.busy = true;
+    clearTimeout(bulkAutoTimer);
+    try {
+      await bulkSubmitOne();
+    } finally {
+      state.bulk.busy = false;
+    }
+  }
+  async function bulkSubmitOne() {
     const tailEl = el('bulkTail');
     const hit = bulkCodesFromTail(tailEl.value);
     let code = hit.code;
@@ -2159,7 +2230,7 @@ const App = (() => {
       return toast(tried + ' — ตรวจเลขอีกครั้ง หรือใช้ "นอกทะเบียน"', 'error');
     }
     const pieceNo = await resolvePiece(code);
-    if (pieceNo === null) { tailEl.value = ''; tailEl.focus(); return; }
+    if (pieceNo === null) { tailEl.value = ''; updateTailHint(); tailEl.focus(); return; }
     const location = el('bulkLocation').value.trim();
     if (location) cacheSet('avLastLocation', location);
     try {
@@ -2173,10 +2244,12 @@ const App = (() => {
     state.bulk.count++;
     afterDataChange();
     updateBulkView();
-    el('bulkLast').innerHTML = icon('check') + ' ล่าสุด: ' + esc(code) + ' (' + RESULTS[state.bulk.resultKey].label +
-      ') ' + thaiDT(new Date().toISOString());
+    el('bulkLast').innerHTML = icon('check') + ' ล่าสุด: <b class="mono">' + esc(code) + '</b>' +
+      (pieceNo > 1 ? ' <b>ชิ้นที่ ' + pieceNo + '</b>' : '') +
+      ' (' + RESULTS[state.bulk.resultKey].label + ') ' + thaiDT(new Date().toISOString());
     beep();
     tailEl.value = '';
+    updateTailHint();
     tailEl.focus();
     flushQueue();
   }

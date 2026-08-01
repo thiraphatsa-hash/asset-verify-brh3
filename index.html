@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=2.1.0">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -377,6 +377,7 @@
             placeholder="26-0001" autocomplete="off" oninput="App.formatBulkTail(this)">
           <button class="primary-button" type="submit">บันทึก</button>
         </form>
+        <p id="bulkMatch" class="bulk-match"></p>
         <div class="bulk-opts">
           <button type="button" class="chip" onclick="App.insertYY()">ใส่ปี YY</button>
           <label class="auto-chip"><input type="checkbox" id="bulkAuto"
@@ -384,7 +385,8 @@
         </div>
         <p class="hint">พิมพ์เฉพาะตัวเลขส่วนท้าย <b>262222</b> ระบบใส่ขีดให้เอง → <b>26-2222</b>
           (แป้นพิมพ์บนมือถือเป็นตัวเลขล้วนแบบกดเบอร์โทร) — บันทึกแล้วช่องเคลียร์ให้ทันที prefix ยังอยู่
-          · รหัสที่ปีเป็นตัวอักษร <b>YY</b> ให้กดปุ่ม "ใส่ปี YY"</p>
+          · รหัสที่ปีเป็นตัวอักษร <b>YY</b> ให้กดปุ่ม "ใส่ปี YY"
+          · เลือกหลายหมวดแล้วเลขท้ายซ้ำกัน ระบบจะให้เลือกหมวดก่อนบันทึกเสมอ (ไม่เดาให้)</p>
         <p class="form-label">ผลที่ใช้บันทึก</p>
         <div id="bulkResultSeg" class="result-seg">
           <button type="button" class="seg seg-ok active" data-result="FOUND_NORMAL" onclick="App.setBulkResult('FOUND_NORMAL')"><span data-icon="check"></span> พบ</button>
@@ -457,8 +459,8 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js"></script>
-  <script src="src/assetStore.js"></script>
-  <script src="app.js"></script>
+  <script src="config.js?v=2.1.0"></script>
+  <script src="src/assetStore.js?v=2.1.0"></script>
+  <script src="app.js?v=2.1.0"></script>
 </body>
 </html>
