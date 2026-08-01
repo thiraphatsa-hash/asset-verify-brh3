@@ -1984,15 +1984,21 @@ const App = (() => {
     const panel = el('bulkCatPanel');
     const willOpen = panel.classList.contains('hidden');
     panel.classList.toggle('hidden', !willOpen);
+    el('bulkCatBtn').classList.toggle('open', willOpen);
     if (willOpen) {
+      el('bulkCatSearch').value = '';
       renderCatPicker();
-      setTimeout(() => el('bulkCatSearch').focus(), 30);
+      setTimeout(() => {
+        el('bulkCatSearch').focus();
+        panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }, 30);
     } else {
       el('bulkTail').focus();
     }
   }
   function closeCatPicker() {
     el('bulkCatPanel').classList.add('hidden');
+    el('bulkCatBtn').classList.remove('open');
     el('bulkTail').focus();
   }
   function renderCatPicker() {
@@ -2011,8 +2017,16 @@ const App = (() => {
   }
   function toggleCat(c) {
     const i = state.bulk.cats.indexOf(c);
-    if (i >= 0) state.bulk.cats.splice(i, 1); else state.bulk.cats.push(c);
-    if (!state.bulk.cats.length) state.bulk.cats = [c];   // ต้องเหลืออย่างน้อย 1 หมวด
+    if (i >= 0) {
+      if (state.bulk.cats.length === 1) {
+        // เอาออกหมดไม่ได้ ต้องเหลืออย่างน้อย 1 หมวดไว้ทำ prefix
+        toast('ต้องเลือกอย่างน้อย 1 หมวด — เลือกหมวดใหม่ก่อนแล้วค่อยเอาหมวดนี้ออก', 'warn');
+        return;
+      }
+      state.bulk.cats.splice(i, 1);
+    } else {
+      state.bulk.cats.push(c);
+    }
     cacheSet('avBulkCats_' + state.ui.type, state.bulk.cats);
     state.bulk.count = 0;
     renderCatPicker();

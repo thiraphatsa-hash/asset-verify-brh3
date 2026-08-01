@@ -853,10 +853,16 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 .combo-item.on { background: var(--accent-tint); color: var(--accent); font-weight: 600; }
 .combo-item small { margin-left: auto; color: var(--faint); font-size: 12px; }
 .combo-empty { text-align: center; color: var(--muted); font-size: 13px; padding: 14px 6px; margin: 0; }
-/* เลือกหลายหมวดในโหมดตรวจต่อเนื่อง */
+/* เลือกหลายหมวดในโหมดตรวจต่อเนื่อง — กางในหน้าเลย ไม่ลอยทับ/หลุดจอ */
+.cat-field { position: relative; }
 .multi-btn { margin-top: 4px; }
-.multi-panel { min-width: 260px; max-height: 360px; }
-.multi-tools { display: flex; gap: 6px; }
+.multi-panel {
+  position: static; min-width: 0; max-height: 320px; margin-top: 6px;
+  box-shadow: none; border: 1.5px solid var(--accent);
+}
+.combo-btn.open { border-color: var(--accent); background: var(--accent-tint); }
+.combo-btn.open .combo-caret { transform: rotate(180deg); }
+.multi-tools { display: flex; gap: 6px; flex-wrap: wrap; }
 .multi-tools .chip { padding: 6px 11px; font-size: 12.5px; }
 .primary-chip { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .multi-box {
