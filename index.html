@@ -351,10 +351,26 @@
         <button class="close-button" type="button" onclick="App.closeBulk()"><span data-icon="close"></span></button>
       </div>
       <div class="sheet-body">
-        <label class="field"><span>หมวดทรัพย์สิน (prefix ค้างไว้)</span>
-          <select id="bulkCat" onchange="App.setBulkCat(this.value)"></select></label>
+        <div class="field">
+          <span>หมวดทรัพย์สิน (prefix ค้างไว้) — เลือกได้หลายหมวดพร้อมกัน</span>
+          <button id="bulkCatBtn" class="combo-btn multi-btn" type="button" onclick="App.toggleCatPicker(event)">
+            <span id="bulkCatLabel" class="combo-label">เลือกหมวด</span><span class="combo-caret">▾</span>
+          </button>
+          <div id="bulkCatPanel" class="combo-panel multi-panel hidden">
+            <label class="combo-search-box"><span data-icon="search"></span>
+              <input id="bulkCatSearch" type="search" class="combo-search" placeholder="พิมพ์เพื่อค้นหาหมวด..."
+                autocomplete="off" oninput="App.renderCatPicker()"></label>
+            <div class="multi-tools">
+              <button type="button" class="chip" onclick="App.pickAllCats(true)">เลือกทั้งหมด</button>
+              <button type="button" class="chip" onclick="App.pickAllCats(false)">ล้าง</button>
+              <button type="button" class="chip primary-chip" onclick="App.closeCatPicker()">เสร็จ</button>
+            </div>
+            <div id="bulkCatList" class="combo-list"></div>
+          </div>
+          <div id="bulkCatChips" class="cat-chips"></div>
+        </div>
         <form class="bulk-entry" onsubmit="event.preventDefault(); App.bulkSubmit();">
-          <span id="bulkPrefix" class="bulk-prefix mono">RT-XXXX-</span>
+          <span id="bulkPrefix" class="bulk-prefix mono" title="หมวดที่กำลังตรวจ">RT-XXXX-</span>
           <input id="bulkTail" class="bulk-tail mono" type="text"
             inputmode="numeric" pattern="[0-9-]*" enterkeyhint="done"
             autocapitalize="characters" autocorrect="off" spellcheck="false"
@@ -379,6 +395,17 @@
         <div id="bulkCounter" class="bulk-counter"></div>
         <div id="bulkLast" class="bulk-last"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ── Modal: เลขท้ายตรงกับหลายหมวด ให้เลือกว่าอันไหน ───────────────────── -->
+  <div id="pickModal" class="modal hidden" onclick="if(event.target===this)App.pickChoose(null)">
+    <div class="sheet dup-sheet">
+      <div class="sheet-head">
+        <div><h3>เลขนี้ตรงกับหลายหมวด</h3><p id="pickSub"></p></div>
+        <button class="close-button" type="button" onclick="App.pickChoose(null)"><span data-icon="close"></span></button>
+      </div>
+      <div class="sheet-body"><div id="pickList" class="dup-actions"></div></div>
     </div>
   </div>
 

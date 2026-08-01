@@ -60,6 +60,95 @@ const App = (() => {
       'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
       'aria-hidden="true">' + body + '</svg>';
   }
+  // ── Dropdown ที่พิมพ์ค้นหาได้ (ครอบ <select> เดิม ไม่ต้องแก้โค้ดที่เรียกใช้) ──
+  /**
+   * ห่อ <select> ด้วยปุ่ม + ช่องค้นหา โดยยังใช้ค่า/เหตุการณ์ change ของ select เดิม
+   * เรียก select.__combo.sync() ทุกครั้งที่เขียน options ใหม่
+   */
+  function enhanceSelect(select) {
+    if (!select || select.__combo) return select ? select.__combo : null;
+    const wrap = document.createElement('div');
+    wrap.className = 'combo';
+    select.parentNode.insertBefore(wrap, select);
+    wrap.appendChild(select);
+    select.classList.add('combo-native');
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'combo-btn';
+    const panel = document.createElement('div');
+    panel.className = 'combo-panel hidden';
+    panel.innerHTML = '<label class="combo-search-box"><span data-icon="search"></span>' +
+      '<input type="search" class="combo-search" placeholder="พิมพ์เพื่อค้นหา..." ' +
+      'autocomplete="off" enterkeyhint="done"></label><div class="combo-list"></div>';
+    wrap.appendChild(btn);
+    wrap.appendChild(panel);
+    hydrateIcons(panel);
+    const search = panel.querySelector('.combo-search');
+    const list = panel.querySelector('.combo-list');
+
+    function sync() {
+      const opt = select.options[select.selectedIndex];
+      btn.innerHTML = '<span class="combo-label">' + esc(opt ? opt.textContent : '') + '</span>' +
+        '<span class="combo-caret">▾</span>';
+    }
+    function renderList() {
+      const q = search.value.trim().toLowerCase();
+      const items = Array.from(select.options).filter((o) =>
+        !q || o.textContent.toLowerCase().indexOf(q) >= 0);
+      list.innerHTML = items.length
+        ? items.map((o) => '<button type="button" class="combo-item' +
+            (o.selected ? ' on' : '') + '" data-v="' + esc(o.value) + '">' +
+            esc(o.textContent) + '</button>').join('')
+        : '<p class="combo-empty">ไม่พบตัวเลือกที่ตรงกับคำค้น</p>';
+    }
+    function open() {
+      document.querySelectorAll('.combo-panel').forEach((p) => p.classList.add('hidden'));
+      panel.classList.remove('hidden');
+      search.value = '';
+      renderList();
+      setTimeout(() => search.focus(), 30);
+    }
+    function close() { panel.classList.add('hidden'); }
+
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (panel.classList.contains('hidden')) open(); else close();
+    });
+    search.addEventListener('input', renderList);
+    search.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') { close(); btn.focus(); }
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        const first = list.querySelector('.combo-item');
+        if (first) first.click();
+      }
+    });
+    list.addEventListener('click', (ev) => {
+      const item = ev.target.closest('.combo-item');
+      if (!item) return;
+      const val = item.getAttribute('data-v') || '';
+      // ตั้งค่าด้วย selectedIndex เชื่อถือได้กว่าการเซ็ต .value ตรงๆ
+      const idx = Array.prototype.findIndex.call(select.options, (o) => o.value === val);
+      if (idx >= 0) select.selectedIndex = idx; else select.value = val;
+      sync();
+      close();
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    panel.addEventListener('click', (ev) => ev.stopPropagation());
+    document.addEventListener('click', close);
+
+    select.__combo = { sync: sync, close: close };
+    sync();
+    return select.__combo;
+  }
+  function syncCombo(id) {
+    const sel = el(id);
+    if (sel && sel.__combo) sel.__combo.sync();
+  }
+  function enhanceAllSelects() {
+    document.querySelectorAll('select:not(.combo-native)').forEach(enhanceSelect);
+  }
   /** เติมไอคอนให้ทุก element ที่มี data-icon ใน HTML คงที่ */
   function hydrateIcons(root) {
     (root || document).querySelectorAll('[data-icon]').forEach((n) => {
@@ -97,7 +186,7 @@ const App = (() => {
     accessSeen: {},
     accessTimer: null,
     scan: { active: false, paused: false, stream: null, reader: null, timer: null, lastCode: '' },
-    bulk: { cat: '', resultKey: 'FOUND_NORMAL', count: 0, auto: true },
+    bulk: { cats: [], resultKey: 'FOUND_NORMAL', count: 0, auto: true },
     importData: null,
     flushing: false,
     channel: null,
@@ -938,6 +1027,7 @@ const App = (() => {
     sel.innerHTML = html;
     sel.value = cats.indexOf(cur) >= 0 ? cur : '';
     state.ui.cat = sel.value;
+    syncCombo('catFilter');
 
     const staffSel = el('staffFilter');
     const curStaff = state.ui.staff;
@@ -958,6 +1048,7 @@ const App = (() => {
     staffSel.innerHTML = h2;
     staffSel.value = curStaff && (curStaff === '__NONE__' || sc[curStaff]) ? curStaff : '';
     state.ui.staff = staffSel.value;
+    syncCombo('staffFilter');
 
     el('tabCountF').textContent = state.master.filter((a) => a.assetType === 'FIXED').length;
     el('tabCountR').textContent = state.master.filter((a) => a.assetType === 'RENTAL').length;
@@ -1851,6 +1942,15 @@ const App = (() => {
   }
 
   // ── โหมดตรวจต่อเนื่อง ──────────────────────────────────────────────────────
+  /** หมวดทั้งหมดของประเภทที่กำลังตรวจ พร้อมจำนวนรายการ */
+  function catCounts() {
+    const counts = {};
+    mastersOfType().forEach((a) => {
+      const c = a.categoryCode || '?';
+      counts[c] = (counts[c] || 0) + 1;
+    });
+    return counts;
+  }
   function openBulk() {
     if (!state.canWrite) return;
     if (!state.activeSession) return toast('เลือกรอบตรวจก่อน', 'warn');
@@ -1858,18 +1958,14 @@ const App = (() => {
     const saved = cacheGet('avBulkResult');
     if (saved && RESULTS[saved] && saved !== 'MOVED') state.bulk.resultKey = saved;
     el('bulkSub').textContent = state.ui.type === 'RENTAL' ? 'ทรัพย์สินของเช่า' : 'ทรัพย์สิน Fixed Assets';
-    const counts = {};
-    mastersOfType().forEach((a) => {
-      const c = a.categoryCode || '?';
-      counts[c] = (counts[c] || 0) + 1;
-    });
+    const counts = catCounts();
     const cats = Object.keys(counts).sort();
     if (!cats.length) return toast('ยังไม่มีทะเบียนของประเภทนี้', 'warn');
-    el('bulkCat').innerHTML = cats.map((c) =>
-      '<option value="' + esc(c) + '">RT-' + esc(c) + ' (' + counts[c] + ' รายการ)</option>').join('');
-    const savedCat = cacheGet('avBulkCat_' + state.ui.type);
-    state.bulk.cat = cats.indexOf(savedCat) >= 0 ? savedCat : cats[0];
-    el('bulkCat').value = state.bulk.cat;
+    const savedCats = cacheGet('avBulkCats_' + state.ui.type) || [];
+    state.bulk.cats = savedCats.filter((c) => cats.indexOf(c) >= 0);
+    if (!state.bulk.cats.length) state.bulk.cats = [cats[0]];
+    el('bulkCatSearch').value = '';
+    renderCatPicker();
     el('bulkLocation').value = cacheGet('avLastLocation') || '';
     el('bulkLast').textContent = '';
     const auto = cacheGet('avBulkAuto');
@@ -1882,13 +1978,62 @@ const App = (() => {
     el('bulkModal').classList.remove('hidden');
     setTimeout(() => el('bulkTail').focus(), 200);
   }
-  function setBulkCat(v) {
-    state.bulk.cat = v;
-    state.bulk.count = 0;
-    cacheSet('avBulkCat_' + state.ui.type, v);
-    el('bulkTail').value = '';
-    updateBulkView();
+  // ── เลือกหมวดหลายหมวดพร้อมกันในโหมดตรวจต่อเนื่อง ───────────────────────────
+  function toggleCatPicker(ev) {
+    if (ev) ev.stopPropagation();
+    const panel = el('bulkCatPanel');
+    const willOpen = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden', !willOpen);
+    if (willOpen) {
+      renderCatPicker();
+      setTimeout(() => el('bulkCatSearch').focus(), 30);
+    } else {
+      el('bulkTail').focus();
+    }
+  }
+  function closeCatPicker() {
+    el('bulkCatPanel').classList.add('hidden');
     el('bulkTail').focus();
+  }
+  function renderCatPicker() {
+    const counts = catCounts();
+    const q = (el('bulkCatSearch').value || '').trim().toUpperCase();
+    const cats = Object.keys(counts).sort().filter((c) => !q || c.indexOf(q) >= 0);
+    el('bulkCatList').innerHTML = cats.length ? cats.map((c) => {
+      const on = state.bulk.cats.indexOf(c) >= 0;
+      return '<button type="button" class="combo-item multi-item' + (on ? ' on' : '') +
+        '" data-cat="' + esc(c) + '" onclick="App.toggleCat(\'' + esc(c) + '\')">' +
+        '<span class="multi-box">' + (on ? '✓' : '') + '</span>' +
+        '<span class="mono">RT-' + esc(c) + '</span>' +
+        '<small>' + counts[c] + ' รายการ</small></button>';
+    }).join('') : '<p class="combo-empty">ไม่พบหมวดที่ตรงกับคำค้น</p>';
+    updateCatLabel();
+  }
+  function toggleCat(c) {
+    const i = state.bulk.cats.indexOf(c);
+    if (i >= 0) state.bulk.cats.splice(i, 1); else state.bulk.cats.push(c);
+    if (!state.bulk.cats.length) state.bulk.cats = [c];   // ต้องเหลืออย่างน้อย 1 หมวด
+    cacheSet('avBulkCats_' + state.ui.type, state.bulk.cats);
+    state.bulk.count = 0;
+    renderCatPicker();
+    updateBulkView();
+  }
+  function pickAllCats(on) {
+    const cats = Object.keys(catCounts()).sort();
+    state.bulk.cats = on ? cats : cats.slice(0, 1);
+    cacheSet('avBulkCats_' + state.ui.type, state.bulk.cats);
+    renderCatPicker();
+    updateBulkView();
+  }
+  function updateCatLabel() {
+    const n = state.bulk.cats.length;
+    el('bulkCatLabel').textContent = n === 1
+      ? 'RT-' + state.bulk.cats[0]
+      : 'เลือกไว้ ' + n + ' หมวด';
+    el('bulkCatChips').innerHTML = state.bulk.cats.slice().sort().map((c) =>
+      '<span class="cat-chip mono">RT-' + esc(c) +
+      '<button type="button" title="เอาออก" onclick="App.toggleCat(\'' + esc(c) + '\')">✕</button></span>'
+    ).join('');
   }
   function setBulkResult(key) {
     state.bulk.resultKey = key;
@@ -1899,15 +2044,60 @@ const App = (() => {
     el('bulkTail').focus();
   }
   function updateBulkView() {
-    el('bulkPrefix').textContent = 'RT-' + state.bulk.cat + '-';
-    const list = mastersOfType().filter((a) => a.categoryCode === state.bulk.cat);
+    const cats = state.bulk.cats;
+    el('bulkPrefix').textContent = cats.length === 1 ? 'RT-' + cats[0] + '-' : 'RT-•••-';
+    el('bulkPrefix').classList.toggle('multi', cats.length > 1);
+    const list = mastersOfType().filter((a) => cats.indexOf(a.categoryCode) >= 0);
     let done = 0;
     list.forEach((a) => {
       if (classify(state.latest.get(a.inventoryNumber)) !== 'pending') done++;
     });
     el('bulkCounter').textContent = 'ตรวจแล้ว ' + done + ' / ' + list.length +
-      ' รายการในหมวดนี้' + (state.bulk.count ? ' · รอบนี้ ' + state.bulk.count + ' รายการ' : '');
+      (cats.length === 1 ? ' รายการในหมวดนี้' : ' รายการใน ' + cats.length + ' หมวดที่เลือก') +
+      (state.bulk.count ? ' · รอบนี้ ' + state.bulk.count + ' รายการ' : '');
+    updateCatLabel();
   }
+  /**
+   * แปลงเลขท้ายเป็น RT code — รองรับเลือกหลายหมวดพร้อมกัน
+   * คืน { code } ถ้าชัดเจน · { candidates } ถ้ามีอยู่จริงหลายหมวด · {} ถ้ารูปแบบผิด
+   */
+  function bulkCodesFromTail(raw) {
+    let s = String(raw || '').toUpperCase().replace(/[–—]/g, '-').replace(/\s+/g, '');
+    if (!s) return {};
+    const full = s.match(INV_RE);
+    if (full) return { code: full[0] };            // วาง/สแกนรหัสเต็มมาเลย
+    s = s.replace(/^-+/, '').replace(/-+$/, '');
+    const m = s.match(/^([A-Z0-9]{2})-?(\d{1,4})$/);
+    if (!m) return {};
+    const tail = m[1] + '-' + m[2].padStart(4, '0');
+    const all = state.bulk.cats.map((c) => 'RT-' + c + '-' + tail);
+    // เลือกเฉพาะรหัสที่มีอยู่จริงในทะเบียนรอบนี้ — เหลือตัวเดียวก็ใช้ได้เลยไม่ต้องถาม
+    const exist = all.filter((code) => state.master.some((a) => a.inventoryNumber === code));
+    if (exist.length === 1) return { code: exist[0] };
+    if (exist.length > 1) return { candidates: exist };
+    return { code: all[0], missing: all };
+  }
+  /** ถามว่าเลขท้ายนี้หมายถึงหมวดไหน (เมื่อมีอยู่จริงมากกว่า 1 หมวด) */
+  function pickCode(candidates) {
+    return new Promise((resolve) => {
+      el('pickSub').textContent = 'เลขท้ายนี้มีอยู่ใน ' + candidates.length + ' หมวด — เลือกที่ต้องการบันทึก';
+      el('pickList').innerHTML = candidates.map((code) => {
+        const a = state.master.find((x) => x.inventoryNumber === code);
+        const l = state.latest.get(code);
+        return '<button class="dup-btn" type="button" data-code="' + esc(code) + '">' +
+          '<b class="mono">' + esc(code) + '</b>' +
+          '<small>' + esc(a ? (a.description || '') : '') +
+          (l ? ' · ' + esc(statusLabel(l)) : ' · ยังไม่ตรวจ') + '</small></button>';
+      }).join('') + '<button class="outline-button" type="button" data-code="">ยกเลิก</button>';
+      state.pickResolve = (v) => {
+        el('pickModal').classList.add('hidden');
+        state.pickResolve = null;
+        resolve(v);
+      };
+      el('pickModal').classList.remove('hidden');
+    });
+  }
+  function pickChoose(code) { if (state.pickResolve) state.pickResolve(code || null); }
   /**
    * จัดรูปแบบช่องกรอกเลขท้ายให้เอง: พิมพ์ 262222 → แสดง 26-2222
    * (เก็บเฉพาะ A-Z 0-9 สูงสุด 6 ตัว แล้วแทรกขีดหลังตัวที่ 2)
@@ -1938,23 +2128,21 @@ const App = (() => {
     cacheSet('avBulkAuto', state.bulk.auto);
     el('bulkTail').focus();
   }
-  function bulkCodeFromTail(raw) {
-    let s = String(raw || '').toUpperCase().replace(/[–—]/g, '-').replace(/\s+/g, '');
-    if (!s) return '';
-    const full = s.match(INV_RE);
-    if (full) return full[0];
-    s = s.replace(/^-+/, '').replace(/-+$/, '');
-    const m = s.match(/^([A-Z0-9]{2})-?(\d{1,4})$/);
-    if (!m) return '';
-    return 'RT-' + state.bulk.cat + '-' + m[1] + '-' + m[2].padStart(4, '0');
-  }
   async function bulkSubmit() {
     const tailEl = el('bulkTail');
-    const code = bulkCodeFromTail(tailEl.value);
+    const hit = bulkCodesFromTail(tailEl.value);
+    let code = hit.code;
+    if (hit.candidates) {
+      code = await pickCode(hit.candidates);       // เลขนี้มีอยู่หลายหมวด ให้เลือก
+      if (!code) { tailEl.focus(); return; }
+    }
     if (!code) return toast('รูปแบบไม่ถูกต้อง — กรอกส่วนท้าย เช่น 26-0001 หรือ 260001', 'warn');
     const asset = state.master.find((a) => a.inventoryNumber === code);
     if (!asset) {
-      return toast('ไม่พบ ' + code + ' ในทะเบียนรอบนี้ — ตรวจเลขอีกครั้ง หรือใช้ "นอกทะเบียน"', 'error');
+      const tried = hit.missing && hit.missing.length > 1
+        ? 'ไม่พบเลขนี้ในหมวดที่เลือก (' + hit.missing.map((c) => c.split('-')[1]).join(', ') + ')'
+        : 'ไม่พบ ' + code + ' ในทะเบียนรอบนี้';
+      return toast(tried + ' — ตรวจเลขอีกครั้ง หรือใช้ "นอกทะเบียน"', 'error');
     }
     const pieceNo = await resolvePiece(code);
     if (pieceNo === null) { tailEl.value = ''; tailEl.focus(); return; }
@@ -2723,7 +2911,7 @@ const App = (() => {
       sel.innerHTML = THEMES.map((t) =>
         '<option value="' + t.key + '">' + esc(t.label) + '</option>').join('');
     }
-    if (sel) sel.value = cacheGet('avTheme') || 'porcelain';
+    if (sel) { sel.value = cacheGet('avTheme') || 'porcelain'; syncCombo('themeSelect'); }
     const totalAssets = state.sessions.reduce((n, s) => n + (s.assetCount || 0), 0);
     el('sysInfo').innerHTML =
       '<span>เวอร์ชัน: ' + APP_VERSION + '</span>' +
@@ -2787,6 +2975,11 @@ const App = (() => {
       const row = ev.target.closest('.dash-list-item');
       if (row && row.dataset.inv) openAsset(row.dataset.inv);
     });
+    el('pickList').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-code]');
+      if (btn) pickChoose(btn.dataset.code);
+    });
+    el('bulkCatPanel').addEventListener('click', (ev) => ev.stopPropagation());
     el('recHistory').addEventListener('click', (ev) => {
       const link = ev.target.closest('.photo-link');
       if (link) { ev.preventDefault(); return viewPhoto(link.dataset.path); }
@@ -2804,6 +2997,7 @@ const App = (() => {
     }, 120000);
     applyTheme(cacheGet('avTheme') || 'porcelain');
     hydrateIcons();
+    enhanceAllSelects();
     const savedView = cacheGet('avView');
     if (savedView === 'card' || savedView === 'table') setView(savedView);
     boot();
@@ -2821,7 +3015,8 @@ const App = (() => {
     openAsset, closeRecord, chooseResult, saveRecord,
     addPhotos, removePhoto, viewPhoto, deleteLogEntry,
     openScanner, closeScanner, resumeScan, scanUnlisted, toggleTorch, dupChoose,
-    openBulk, closeBulk, setBulkCat, setBulkResult, bulkSubmit,
+    openBulk, closeBulk, setBulkResult, bulkSubmit, pickChoose,
+    toggleCatPicker, closeCatPicker, renderCatPicker, toggleCat, pickAllCats,
     formatBulkTail, insertYY, setBulkAuto,
     openUnlisted, exportExcel, toggleSection,
     setUserField, clearLocalCache
