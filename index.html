@@ -264,10 +264,16 @@
     <div class="scanner-wrap">
       <div class="scanner-top">
         <span id="scanStatus" class="scan-status">กำลังเปิดกล้อง...</span>
-        <button class="close-button" type="button" onclick="App.closeScanner()"><span data-icon="close"></span></button>
+        <div class="scanner-tools">
+          <button id="torchBtn" class="scan-tool hidden" type="button" onclick="App.toggleTorch()"
+            title="เปิด/ปิดไฟฉาย">💡</button>
+          <button class="close-button" type="button" onclick="App.closeScanner()"><span data-icon="close"></span></button>
+        </div>
       </div>
-      <video id="scanVideo" playsinline muted></video>
+      <video id="scanVideo" playsinline muted autoplay></video>
+      <canvas id="scanCanvas" class="hidden"></canvas>
       <div class="scan-frame"></div>
+      <div id="scanHint" class="scan-hint">เล็ง QR ให้เต็มกรอบ ห่างประมาณ 15–25 ซม.</div>
       <div id="scanNotFound" class="scan-notfound hidden">
         <p>ไม่พบรหัส <b id="nfCode"></b> ในทะเบียนรอบนี้</p>
         <div class="scan-nf-actions">
@@ -372,6 +378,34 @@
           <input id="bulkLocation" type="text" list="locList" placeholder="เช่น คลังเก็บของ โซน B"></label>
         <div id="bulkCounter" class="bulk-counter"></div>
         <div id="bulkLast" class="bulk-last"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Modal: RT code นี้บันทึกไปแล้ว จะนับเป็นชิ้นใหม่หรือแก้ผลเดิม ────── -->
+  <div id="dupModal" class="modal hidden" onclick="if(event.target===this)App.dupChoose(null)">
+    <div class="sheet dup-sheet">
+      <div class="sheet-head">
+        <div>
+          <div class="rec-title-row"><h3 class="mono" id="dupTitle"></h3>
+            <span class="type-badge t-unlisted">บันทึกซ้ำ</span></div>
+          <p>RT code นี้ถูกบันทึกไปแล้วในรอบนี้</p>
+        </div>
+        <button class="close-button" type="button" onclick="App.dupChoose(null)"><span data-icon="close"></span></button>
+      </div>
+      <div class="sheet-body">
+        <div id="dupInfo" class="rec-warn"></div>
+        <p class="hint">หน้างานจริงมี RT code เดียวกันติดอยู่กับของ 2–3 ชิ้นคนละที่ —
+          เลือกให้ตรงกับสถานการณ์ ระบบจะนับจำนวนชิ้นและออกรายงานให้ถูกต้อง</p>
+        <div class="dup-actions">
+          <button class="dup-btn dup-new" type="button" onclick="App.dupChoose('new')">
+            <b id="dupNewLabel">พบอีกชิ้น</b>
+            <small>ของคนละชิ้นที่ใช้ RT code ซ้ำกัน — เพิ่มจำนวนที่พบ</small></button>
+          <button class="dup-btn dup-edit" type="button" onclick="App.dupChoose('edit')">
+            <b>แก้ไขผลเดิม</b>
+            <small>ของชิ้นเดิม บันทึกผิดหรือเปลี่ยนผล — ไม่เพิ่มจำนวน</small></button>
+          <button class="outline-button" type="button" onclick="App.dupChoose(null)">ยกเลิก</button>
+        </div>
       </div>
     </div>
   </div>

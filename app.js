@@ -166,6 +166,7 @@ const App = (() => {
   // ── โหลดไลบรารีตอนใช้จริง ──────────────────────────────────────────────────
   const LIBS = {
     xlsx: { url: 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', global: 'XLSX' },
+    exceljs: { url: 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js', global: 'ExcelJS' },
     zxing: { url: 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js', global: 'ZXing' }
   };
   const libLoading = {};
@@ -247,6 +248,7 @@ const App = (() => {
             condition: it.condition || null,
             method: it.method,
             inspector: it.inspector,
+            pieceNo: it.pieceNo || 1,
             locationText: it.locationText || '',
             gpsLat: it.gpsLat == null ? null : it.gpsLat,
             gpsLng: it.gpsLng == null ? null : it.gpsLng,
@@ -287,7 +289,7 @@ const App = (() => {
       logId: 'pending-' + it.clientId, clientId: it.clientId, sessionId: it.sessionId,
       inventoryNumber: it.inventoryNumber, assetType: it.assetType,
       result: it.result, condition: it.condition, method: it.method,
-      inspector: it.inspector, locationText: it.locationText,
+      inspector: it.inspector, locationText: it.locationText, pieceNo: it.pieceNo || 1,
       moveToSite: it.moveToSite, moveDocNo: it.moveDocNo, moveDate: it.moveDate,
       note: it.note, unregistered: it.unregistered, unlistedDesc: it.unlistedDesc,
       verifiedAt: it.verifiedAt, photoPaths: [],
@@ -303,9 +305,18 @@ const App = (() => {
   }
   function rebuildIndex() {
     const map = new Map();
+    const piecesSeen = new Map();      // inv → Set(pieceNo)
     allLogs().forEach((l) => {
       const cur = map.get(l.inventoryNumber);
       if (!cur || String(l.verifiedAt) >= String(cur.verifiedAt)) map.set(l.inventoryNumber, l);
+      const set = piecesSeen.get(l.inventoryNumber) || new Set();
+      set.add(Number(l.pieceNo) > 0 ? Number(l.pieceNo) : 1);
+      piecesSeen.set(l.inventoryNumber, set);
+    });
+    // แนบจำนวนชิ้นที่บันทึกไว้ให้ record ล่าสุด เพื่อให้ตาราง/สรุปใช้ได้ทันที
+    map.forEach((l, inv) => {
+      const set = piecesSeen.get(inv);
+      l.pieces = set ? set.size : 1;
     });
     state.latest = map;
   }
@@ -316,6 +327,22 @@ const App = (() => {
     const dup = state.logs.some((l) => l.logId === log.logId ||
       (log.clientId && l.clientId === log.clientId));
     if (!dup) state.logs.push(log);
+  }
+  // ── RT code ที่ใช้ซ้ำหลายชิ้น ────────────────────────────────────────────────
+  /** รวม record ของ RT code หนึ่ง แล้วสรุปเป็น "ชิ้น" (piece) ตาม pieceNo */
+  function piecesOf(inv) {
+    const rows = allLogs().filter((l) => l.inventoryNumber === inv);
+    const byPiece = new Map();
+    rows.forEach((l) => {
+      const p = Number(l.pieceNo) > 0 ? Number(l.pieceNo) : 1;
+      const cur = byPiece.get(p);
+      if (!cur || String(l.verifiedAt) >= String(cur.verifiedAt)) byPiece.set(p, l);
+    });
+    return Array.from(byPiece.keys()).sort((a, b) => a - b).map((p) => byPiece.get(p));
+  }
+  function pieceCount(inv) {
+    const l = state.latest.get(inv);
+    return l && l.pieces ? l.pieces : 1;
   }
   function classify(log) {
     if (!log) return 'pending';
@@ -983,7 +1010,9 @@ const App = (() => {
   }
   function statusCell(latest) {
     const cls = classify(latest);
-    return '<span class="pill st-' + cls + '">' + esc(statusLabel(latest)) + '</span>';
+    const n = latest && latest.pieces > 1 ? latest.pieces : 0;
+    return '<span class="pill st-' + cls + '">' + esc(statusLabel(latest)) + '</span>' +
+      (n ? '<span class="dup-badge" title="RT code นี้ถูกบันทึก ' + n + ' ชิ้น">× ' + n + '</span>' : '');
   }
   function verifyMeta(l) {
     if (!l) return '<span class="text-faint">—</span>';
@@ -1208,10 +1237,14 @@ const App = (() => {
     if (!invs.length) return;
     const rk = RESULTS[resultKey];
     const already = invs.filter((i) => state.latest.get(i));
+    let dupMode = null;
     if (already.length) {
-      const ok = window.confirm('ในรายการที่เลือกมี ' + already.length + ' รายการที่ตรวจไปแล้ว\n' +
-        'ยืนยันบันทึกซ้ำเป็นรายการใหม่ต่อท้าย?');
-      if (!ok) return;
+      // เลือกครั้งเดียวใช้กับทั้งชุด (ถามทีละรายการจะช้าเกินไปตอนตรวจเป็นชุด)
+      const first = already[0];
+      const choice = await askDuplicate(first + (already.length > 1
+        ? ' และอีก ' + (already.length - 1) + ' รายการ' : ''), state.latest.get(first));
+      if (!choice) return;
+      dupMode = choice;
     }
     const location = el('bulkBarLocation').value.trim();
     if (location) cacheSet('avLastLocation', location);
@@ -1220,8 +1253,10 @@ const App = (() => {
     for (let i = 0; i < invs.length; i++) {
       const asset = state.master.find((a) => a.inventoryNumber === invs[i]);
       if (!asset) continue;
+      const pieceNo = await resolvePiece(invs[i], { dupMode: dupMode });
+      if (pieceNo === null) continue;
       await queueRecord({
-        inventoryNumber: invs[i], assetType: asset.assetType,
+        inventoryNumber: invs[i], assetType: asset.assetType, pieceNo: pieceNo,
         resultKey: resultKey, method: 'MANUAL', locationText: location
       });
       n++;
@@ -1235,19 +1270,61 @@ const App = (() => {
   async function quickSave(inv, resultKey) {
     const asset = state.master.find((a) => a.inventoryNumber === inv);
     if (!asset) return;
-    const latest = state.latest.get(inv);
-    if (latest) {
-      const ok = window.confirm(inv + ' ตรวจแล้วโดย ' + (latest.inspector || '-') + '\n' +
-        thaiDT(latest.verifiedAt) + ' (ผล: ' + statusLabel(latest) + ')\n\nบันทึกซ้ำเป็นรายการใหม่?');
-      if (!ok) return;
-    }
+    const pieceNo = await resolvePiece(inv);
+    if (pieceNo === null) { renderList(); return; }   // ยกเลิก — คืนสถานะช่องติ๊ก
     await queueRecord({
       inventoryNumber: inv, assetType: asset.assetType, resultKey: resultKey, method: 'MANUAL',
+      pieceNo: pieceNo,
       locationText: (el('bulkBarLocation').value || cacheGet('avLastLocation') || '').trim()
     });
     beep();
     afterDataChange();
     flushQueue();
+  }
+  /**
+   * ถามเมื่อ RT code นี้ถูกบันทึกไปแล้ว — คืน 'new' (พบอีกชิ้น) / 'edit' (แก้ผลเดิม) / null (ยกเลิก)
+   * กรณีจริง: RT code เดียวกันถูกติดไว้กับของ 2–3 ชิ้นคนละที่
+   */
+  function askDuplicate(inv, latest) {
+    return new Promise((resolve) => {
+      const pieces = piecesOf(inv);
+      el('dupTitle').textContent = inv;
+      el('dupInfo').innerHTML =
+        'ตรวจแล้วโดย <b>' + esc(latest.inspector || '-') + '</b> เมื่อ ' +
+        esc(thaiDT(latest.verifiedAt)) + ' (ผล: ' + esc(statusLabel(latest)) + ')' +
+        (pieces.length > 1 ? '<br>ขณะนี้บันทึกไว้แล้ว <b>' + pieces.length + ' ชิ้น</b>' : '') +
+        '<div class="dup-pieces">' + pieces.map((p, i) =>
+          '<span class="pill st-' + classify(p) + '">ชิ้นที่ ' + (i + 1) + ': ' +
+          esc(statusLabel(p)) + '</span>').join('') + '</div>';
+      el('dupNewLabel').textContent = 'พบอีกชิ้น — นับเป็นชิ้นที่ ' + (pieces.length + 1);
+      const done = (val) => {
+        el('dupModal').classList.add('hidden');
+        state.dupResolve = null;
+        resolve(val);
+      };
+      state.dupResolve = done;
+      el('dupModal').classList.remove('hidden');
+    });
+  }
+  function dupChoose(kind) { if (state.dupResolve) state.dupResolve(kind || null); }
+  /**
+   * ตัดสินใจเลขชิ้น (pieceNo) ของ record ที่กำลังจะบันทึก
+   * คืน null = ผู้ใช้ยกเลิก
+   */
+  async function resolvePiece(inv, opts) {
+    const latest = state.latest.get(inv);
+    if (!latest) return 1;                       // ยังไม่เคยบันทึก = ชิ้นที่ 1
+    if (opts && opts.dupMode === 'new') {
+      return piecesOf(inv).length + 1;
+    }
+    if (opts && opts.dupMode === 'edit') {
+      return Number(latest.pieceNo) > 0 ? Number(latest.pieceNo) : 1;
+    }
+    const choice = await askDuplicate(inv, latest);
+    if (!choice) return null;
+    return choice === 'new'
+      ? piecesOf(inv).length + 1
+      : (Number(latest.pieceNo) > 0 ? Number(latest.pieceNo) : 1);
   }
   /** สร้าง record ลงคิว (ทุกเส้นทางการบันทึกผ่านฟังก์ชันนี้) */
   async function queueRecord(opts) {
@@ -1258,6 +1335,7 @@ const App = (() => {
       clientId: AssetStore.uuid(),
       sessionId: s.sessionId,
       site: s.site,
+      pieceNo: opts.pieceNo || 1,
       inventoryNumber: opts.inventoryNumber,
       assetType: opts.assetType,
       result: rk.result,
@@ -1528,18 +1606,13 @@ const App = (() => {
       inv = rec.asset.inventoryNumber;
       assetType = rec.asset.assetType;
     }
-    const latest = state.latest.get(inv);
-    if (latest) {
-      const okDup = window.confirm('รายการนี้ถูกตรวจแล้วโดย ' + (latest.inspector || '-') +
-        ' เมื่อ ' + thaiDT(latest.verifiedAt) + '\nผล: ' + statusLabel(latest) +
-        '\n\nยืนยันบันทึกซ้ำเป็นรายการใหม่ต่อท้าย?');
-      if (!okDup) return;
-    }
+    const pieceNo = await resolvePiece(inv);
+    if (pieceNo === null) return;
     const location = el('recLocation').value.trim();
     if (location) cacheSet('avLastLocation', location);
     try {
       await queueRecord({
-        inventoryNumber: inv, assetType: assetType, resultKey: rec.resultKey,
+        inventoryNumber: inv, assetType: assetType, resultKey: rec.resultKey, pieceNo: pieceNo,
         method: rec.method, locationText: location, gps: rec.gps,
         moveToSite: rec.resultKey === 'MOVED' ? el('moveSite').value.trim().toUpperCase() : null,
         moveDocNo: rec.resultKey === 'MOVED' ? el('moveDoc').value.trim() : null,
@@ -1587,57 +1660,149 @@ const App = (() => {
   }
 
   // ── สแกน QR ────────────────────────────────────────────────────────────────
+  // อ่านจาก "กรอบกลางจอ" ที่ครอปลง canvas แล้วส่งให้ตัวถอดรหัส 2 ชั้น
+  // (BarcodeDetector ของเครื่อง → ถ้าไม่มีใช้ ZXing) วิธีนี้จับ QR เล็กได้ดีกว่า
+  // การส่งภาพเต็มเฟรม และใช้ได้ทั้ง Android/iOS
   function setScanStatus(text) { el('scanStatus').textContent = text; }
   async function openScanner() {
     if (!state.canWrite) return;
     if (!state.activeSession) return toast('เลือกรอบตรวจก่อนเริ่มสแกน', 'warn');
     el('scannerModal').classList.remove('hidden');
     el('scanNotFound').classList.add('hidden');
+    el('torchBtn').classList.add('hidden');
     state.scan.active = true;
     state.scan.paused = false;
+    state.scan.frames = 0;
+    state.scan.torchOn = false;
     setScanStatus('กำลังเปิดกล้อง...');
     try {
-      if (!window.isSecureContext) {
-        throw new Error('กล้องใช้ได้เฉพาะเมื่อเปิดผ่าน https');
-      }
+      if (!window.isSecureContext) throw new Error('กล้องใช้ได้เฉพาะเมื่อเปิดผ่าน https');
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('เบราว์เซอร์นี้ไม่รองรับกล้อง');
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false
-      });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { exact: 'environment' },
+            width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        });
+      } catch (e) {
+        // บางเครื่องไม่มีกล้องหลังหรือไม่ยอมรับ exact → ใช้กล้องไหนก็ได้
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false
+        });
+      }
       if (!state.scan.active) { stream.getTracks().forEach((tr) => tr.stop()); return; }
       state.scan.stream = stream;
       const video = el('scanVideo');
       video.srcObject = stream;
+      video.setAttribute('playsinline', 'true');
       await video.play();
-      if ('BarcodeDetector' in window) {
-        let detector;
-        try { detector = new window.BarcodeDetector({ formats: ['qr_code', 'code_128', 'code_39'] }); }
-        catch (e) { detector = new window.BarcodeDetector(); }
-        state.scan.timer = setInterval(async () => {
-          if (!state.scan.active || state.scan.paused) return;
-          try {
-            const codes = await detector.detect(video);
-            if (codes && codes.length) onScanDecode(codes[0].rawValue);
-          } catch (e) {}
-        }, 200);
-      } else {
-        await ensureLibrary('zxing');
-        const hints = new Map();
-        if (window.ZXing.DecodeHintType) hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
-        state.scan.reader = new window.ZXing.BrowserMultiFormatReader(hints);
-        await state.scan.reader.decodeFromStream(stream, video, (result) => {
-          if (result && state.scan.active && !state.scan.paused) onScanDecode(result.getText());
-        });
-      }
-      setScanStatus('กล้องพร้อม — เล็ง QR Code ในกรอบ');
+      await new Promise((res) => {
+        if (video.videoWidth) return res();
+        video.onloadedmetadata = () => res();
+        setTimeout(res, 1500);
+      });
+      setupTorch(stream);
+      improveFocus(stream);
+      await startDecodeLoop(video);
     } catch (e) {
-      setScanStatus(/denied|permission/i.test(e.message)
-        ? 'ไม่ได้รับอนุญาตใช้กล้อง — เปิดสิทธิ์กล้องในเบราว์เซอร์'
-        : 'เปิดกล้องไม่ได้: ' + e.message);
+      setScanStatus(/denied|permission|NotAllowed/i.test(e.message || e.name || '')
+        ? 'ไม่ได้รับอนุญาตใช้กล้อง — เปิดสิทธิ์กล้องของเว็บนี้ในเบราว์เซอร์'
+        : 'เปิดกล้องไม่ได้: ' + (e.message || e.name));
     }
+  }
+  /** ไฟฉาย (Android Chrome รองรับ · iOS Safari ยังไม่รองรับ ปุ่มจะไม่ขึ้น) */
+  function setupTorch(stream) {
+    const track = stream.getVideoTracks()[0];
+    state.scan.track = track;
+    try {
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      if (caps && caps.torch) {
+        el('torchBtn').classList.remove('hidden');
+        el('torchBtn').classList.remove('on');
+      }
+    } catch (e) {}
+  }
+  async function toggleTorch() {
+    const track = state.scan.track;
+    if (!track) return;
+    const on = !state.scan.torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: on }] });
+      state.scan.torchOn = on;
+      el('torchBtn').classList.toggle('on', on);
+    } catch (e) {
+      toast('เครื่องนี้เปิดไฟฉายจากเว็บไม่ได้', 'warn');
+    }
+  }
+  function improveFocus(stream) {
+    const track = stream.getVideoTracks()[0];
+    try {
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      const adv = [];
+      if (caps.focusMode && caps.focusMode.indexOf('continuous') >= 0) adv.push({ focusMode: 'continuous' });
+      if (caps.zoom && caps.zoom.min <= 1.6 && caps.zoom.max >= 1.6) adv.push({ zoom: 1.6 });
+      if (adv.length) track.applyConstraints({ advanced: adv });
+    } catch (e) {}
+  }
+  async function startDecodeLoop(video) {
+    const canvas = el('scanCanvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const SIZE = 560;
+    canvas.width = SIZE;
+    canvas.height = SIZE;
+
+    let detector = null;
+    if ('BarcodeDetector' in window) {
+      try {
+        const supported = await window.BarcodeDetector.getSupportedFormats();
+        const want = ['qr_code', 'code_128', 'code_39'].filter((f) => supported.indexOf(f) >= 0);
+        detector = new window.BarcodeDetector(want.length ? { formats: want } : undefined);
+      } catch (e) { detector = null; }
+    }
+    let zxing = null;
+    if (!detector) {
+      await ensureLibrary('zxing');
+      const hints = new Map();
+      if (window.ZXing.DecodeHintType) {
+        hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+        if (window.ZXing.BarcodeFormat) {
+          hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS,
+            [window.ZXing.BarcodeFormat.QR_CODE, window.ZXing.BarcodeFormat.CODE_128,
+              window.ZXing.BarcodeFormat.CODE_39]);
+        }
+      }
+      zxing = new window.ZXing.BrowserMultiFormatReader(hints);
+      state.scan.reader = zxing;
+    }
+    setScanStatus('กล้องพร้อม (' + (detector ? 'ตัวอ่านของเครื่อง' : 'ZXing') + ') — เล็ง QR ในกรอบ');
+
+    state.scan.timer = setInterval(async () => {
+      if (!state.scan.active || state.scan.paused) return;
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      if (!vw || !vh) return;
+      // ครอปสี่เหลี่ยมจัตุรัสกลางภาพ ~70% ให้ตรงกับกรอบส้มบนจอ
+      const side = Math.round(Math.min(vw, vh) * 0.7);
+      const sx = Math.round((vw - side) / 2);
+      const sy = Math.round((vh - side) / 2);
+      ctx.drawImage(video, sx, sy, side, side, 0, 0, SIZE, SIZE);
+      state.scan.frames++;
+      if (state.scan.frames % 20 === 0) {
+        setScanStatus('กำลังอ่าน... (' + vw + '×' + vh + ' · ' + state.scan.frames + ' เฟรม)');
+      }
+      try {
+        if (detector) {
+          const codes = await detector.detect(canvas);
+          if (codes && codes.length) return onScanDecode(codes[0].rawValue);
+        } else if (zxing) {
+          const result = zxing.decodeFromCanvas(canvas);
+          if (result) return onScanDecode(result.getText());
+        }
+      } catch (e) { /* ไม่เจอในเฟรมนี้ = ปกติ */ }
+    }, 180);
   }
   function onScanDecode(text) {
     if (!state.scan.active || state.scan.paused) return;
@@ -1672,6 +1837,11 @@ const App = (() => {
     state.scan.paused = false;
     if (state.scan.timer) { clearInterval(state.scan.timer); state.scan.timer = null; }
     if (state.scan.reader) { try { state.scan.reader.reset(); } catch (e) {} state.scan.reader = null; }
+    if (state.scan.torchOn && state.scan.track) {
+      try { state.scan.track.applyConstraints({ advanced: [{ torch: false }] }); } catch (e) {}
+    }
+    state.scan.track = null;
+    state.scan.torchOn = false;
     if (state.scan.stream) {
       state.scan.stream.getTracks().forEach((tr) => tr.stop());
       state.scan.stream = null;
@@ -1786,18 +1956,13 @@ const App = (() => {
     if (!asset) {
       return toast('ไม่พบ ' + code + ' ในทะเบียนรอบนี้ — ตรวจเลขอีกครั้ง หรือใช้ "นอกทะเบียน"', 'error');
     }
-    const latest = state.latest.get(code);
-    if (latest) {
-      const ok = window.confirm('⚠ ' + code + ' ถูกตรวจแล้วโดย ' + (latest.inspector || '-') +
-        '\nเมื่อ ' + thaiDT(latest.verifiedAt) + ' (ผล: ' + statusLabel(latest) +
-        ')\n\nยืนยันบันทึกซ้ำเป็นรายการใหม่?');
-      if (!ok) { tailEl.value = ''; tailEl.focus(); return; }
-    }
+    const pieceNo = await resolvePiece(code);
+    if (pieceNo === null) { tailEl.value = ''; tailEl.focus(); return; }
     const location = el('bulkLocation').value.trim();
     if (location) cacheSet('avLastLocation', location);
     try {
       await queueRecord({
-        inventoryNumber: code, assetType: asset.assetType,
+        inventoryNumber: code, assetType: asset.assetType, pieceNo: pieceNo,
         resultKey: state.bulk.resultKey, method: 'MANUAL', locationText: location
       });
     } catch (e) {
@@ -2030,171 +2195,408 @@ const App = (() => {
   }
 
   // ── Export Excel ───────────────────────────────────────────────────────────
-  /** หัวรายงาน 4 บรรทัดแรก เหมือนฟอร์มต้นฉบับ */
-  function reportHead(s, title, width) {
-    const blank = new Array(width).fill('');
-    const line = (txt) => { const r = blank.slice(); r[0] = txt; return r; };
+
+  /** ข้อมูลผลตรวจล่าสุดของ RT code หนึ่ง สำหรับเติมลงชีทฟอร์ม */
+  function reportCells(a) {
+    const l = state.latest.get(a.inventoryNumber);
+    const c = classify(l);
+    return {
+      yes: c === 'found' ? '✓' : '',
+      no: c === 'notfound' ? '✓' : '',
+      site: l && c === 'moved' ? (l.moveToSite || '') : '',
+      doc: l && c === 'moved' ? (l.moveDocNo || '') : '',
+      date: l && c === 'moved' && l.moveDate ? thaiD(l.moveDate) : '',
+      note: l ? (l.note || '') : '',                       // เว้นว่างถ้าไม่ได้ระบุ
+      pieces: l ? (l.pieces || 1) : '',
+      by: l ? (l.inspector || '') : '',
+      at: l ? thaiDT(l.verifiedAt) : '',
+      where: l ? (l.locationText || '') : '',
+      how: l ? l.method : ''
+    };
+  }
+  const EXTRA_HEAD = ['จำนวนที่บันทึก (ชิ้น)', 'ผู้บันทึก', 'เวลาที่บันทึก', 'ตำแหน่งที่ตรวจ', 'วิธี'];
+  const THIN = { style: 'thin', color: { argb: 'FFBFBFBF' } };
+  const BORDER = { top: THIN, left: THIN, bottom: THIN, right: THIN };
+
+  function styleHeadCell(cell, fill) {
+    cell.font = { name: 'Tahoma', size: 9, bold: true };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    cell.border = BORDER;
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill || 'FFEDF1F7' } };
+  }
+  /** สร้างชีทฟอร์มรายงาน (โครงเดียวกับไฟล์ .xls ต้นฉบับ + คอลัมน์เสริมท้ายตาราง) */
+  function buildFormSheet(wb, s, opts) {
+    const ws = wb.addWorksheet(opts.sheetName, {
+      views: [{ state: 'frozen', ySplit: 8 }],
+      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 }
+    });
+    const W = opts.widths;
+    W.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    const lastCol = W.length;
+
+    // หัวรายงาน 4 บรรทัดแบบฟอร์มเดิม
     const d = new Date();
     const from = s.countDateFrom ? new Date(s.countDateFrom + 'T00:00:00') : d;
     const to = s.countDateTo ? new Date(s.countDateTo + 'T00:00:00') : null;
     const days = from.getDate() + (to && to.getDate() !== from.getDate() ? ' - ' + to.getDate() : '');
-    const titleRow = blank.slice();
-    titleRow[Math.min(4, width - 1)] = title;
-    return [
-      titleRow,
-      line('Site/Cost center......' + (s.costCenter || s.site || '') + '..........'),
-      line('วันที่…' + days + '.….. /…' + TH_MONTHS[from.getMonth()].replace(/\./g, '') +
-        '.... /….' + (from.getFullYear() + 543) + '......'),
-      line('Run Date ' + pad2(d.getDate()) + '.' + pad2(d.getMonth() + 1) + '.' + d.getFullYear() +
-        ' Time ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds())),
-      blank.slice()
-    ];
+    ws.mergeCells(1, 1, 1, lastCol);
+    const title = ws.getCell(1, 1);
+    title.value = opts.title;
+    title.font = { name: 'Tahoma', size: 13, bold: true };
+    title.alignment = { horizontal: 'center' };
+    ws.getCell(2, 1).value = 'Site/Cost center......' + (s.costCenter || s.site || '') + '..........';
+    ws.getCell(3, 1).value = 'วันที่…' + days + '.….. /…' +
+      TH_MONTHS[from.getMonth()].replace(/\./g, '') + '.... /….' + (from.getFullYear() + 543) + '......';
+    ws.getCell(4, 1).value = 'Run Date ' + pad2(d.getDate()) + '.' + pad2(d.getMonth() + 1) + '.' +
+      d.getFullYear() + ' Time ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    [2, 3, 4].forEach((r) => { ws.getCell(r, 1).font = { name: 'Tahoma', size: 10 }; });
+
+    // หัวตาราง 3 ชั้น (แถว 6-8)
+    opts.head.forEach((h) => {
+      ws.mergeCells(h.r1, h.c1, h.r2, h.c2);
+      const cell = ws.getCell(h.r1, h.c1);
+      cell.value = h.text;
+      styleHeadCell(cell, h.fill);
+    });
+    for (let r = 6; r <= 8; r++) {
+      for (let c = 1; c <= lastCol; c++) {
+        const cell = ws.getCell(r, c);
+        if (!cell.border) styleHeadCell(cell);
+      }
+    }
+    ws.getRow(6).height = 16;
+    ws.getRow(7).height = 16;
+    ws.getRow(8).height = 26;
+
+    // ข้อมูล
+    opts.rows.forEach((values, i) => {
+      const r = 9 + i;
+      values.forEach((v, c) => {
+        const cell = ws.getCell(r, c + 1);
+        cell.value = v === '' ? null : v;
+        cell.border = BORDER;
+        cell.font = { name: 'Tahoma', size: 9 };
+        cell.alignment = { vertical: 'middle', wrapText: c === opts.descCol };
+      });
+      // ช่อง Yes / No ให้เป็นเครื่องหมายถูกกลางช่อง สีเขียว/แดง
+      [opts.yesCol, opts.noCol].forEach((c, k) => {
+        const cell = ws.getCell(r, c + 1);
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.font = { name: 'Tahoma', size: 12, bold: true,
+          color: { argb: k === 0 ? 'FF1F7A4D' : 'FFB0402F' } };
+      });
+      const pcCell = ws.getCell(r, opts.pieceCol + 1);
+      pcCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      if (Number(pcCell.value) > 1) {
+        pcCell.font = { name: 'Tahoma', size: 10, bold: true, color: { argb: 'FFB45309' } };
+        pcCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3D6' } };
+      }
+    });
+    ws.autoFilter = { from: { row: 8, column: 1 }, to: { row: 8 + opts.rows.length, column: lastCol } };
+    return ws;
   }
-  const mergeRange = (r1, c1, r2, c2) => ({ s: { r: r1, c: c1 }, e: { r: r2, c: c2 } });
+
   async function exportExcel() {
     const s = state.activeSession;
     if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
     try {
       busy('กำลังสร้างไฟล์ Excel...');
-      await ensureLibrary('xlsx');
-      const XLSX = window.XLSX;
-      // ══ ชีท 1: สรุปผลการตรวจนับ ══
+      await ensureLibrary('exceljs');
+      const wb = new window.ExcelJS.Workbook();
+      wb.creator = inspectorName();
+      wb.created = new Date();
+
       const st = { FIXED: typeStats('FIXED'), RENTAL: typeStats('RENTAL') };
       const logsAll = allLogs();
-      const unlisted = logsAll.filter((l) => l.unregistered);
       const unlistedMap = {};
-      unlisted.forEach((l) => {
-        if (!unlistedMap[l.inventoryNumber] ||
-            String(l.verifiedAt) > String(unlistedMap[l.inventoryNumber].verifiedAt)) {
-          unlistedMap[l.inventoryNumber] = l;
-        }
+      logsAll.filter((l) => l.unregistered).forEach((l) => {
+        const cur = unlistedMap[l.inventoryNumber];
+        if (!cur || String(l.verifiedAt) > String(cur.verifiedAt)) unlistedMap[l.inventoryNumber] = l;
       });
       const unlistedList = Object.keys(unlistedMap).map((k) => unlistedMap[k]);
-      const sum = [
-        ['สรุปผลการตรวจนับทรัพย์สิน'],
-        [],
-        ['โครงการ', s.site], ['ชื่อรอบ', s.roundName || ''], ['Cost center', s.costCenter || ''],
+      // RT code ที่ถูกใช้ซ้ำหลายชิ้น
+      const dupCodes = [];
+      state.latest.forEach((l, inv) => { if (l.pieces > 1) dupCodes.push({ inv: inv, n: l.pieces }); });
+      dupCodes.sort((a, b) => b.n - a.n);
+      const extraPieces = dupCodes.reduce((n, d) => n + (d.n - 1), 0);
+
+      // ══ ชีท 1: สรุปผล ══
+      const sum = wb.addWorksheet('สรุปผล');
+      sum.getColumn(1).width = 34;
+      [16, 14, 12, 20, 26, 14].forEach((w, i) => { sum.getColumn(i + 2).width = w; });
+      const put = (r, c, v, bold) => {
+        const cell = sum.getCell(r, c);
+        cell.value = v;
+        cell.font = { name: 'Tahoma', size: bold ? 11 : 10, bold: !!bold };
+        return cell;
+      };
+      put(1, 1, 'สรุปผลการตรวจนับทรัพย์สิน', true).font = { name: 'Tahoma', size: 14, bold: true };
+      const info = [['โครงการ', s.site], ['ชื่อรอบ', s.roundName || ''],
+        ['Cost center', s.costCenter || ''],
         ['วันที่ตรวจ', thaiD(s.countDateFrom) + (s.countDateTo ? ' – ' + thaiD(s.countDateTo) : '')],
         ['ผู้รับผิดชอบ', s.inspectorName || ''],
-        ['ออกรายงานเมื่อ', thaiDT(new Date().toISOString())], ['ออกโดย', inspectorName()],
-        [],
-        ['รายการ', 'Fixed Assets', 'ของเช่า', 'รวม'],
-        ['ทรัพย์สินตามทะเบียน', st.FIXED.total, st.RENTAL.total, st.FIXED.total + st.RENTAL.total],
-        ['ตรวจแล้ว', st.FIXED.done, st.RENTAL.done, st.FIXED.done + st.RENTAL.done],
-        ['พบ', st.FIXED.found, st.RENTAL.found, st.FIXED.found + st.RENTAL.found],
-        ['ไม่พบ', st.FIXED.notfound, st.RENTAL.notfound, st.FIXED.notfound + st.RENTAL.notfound],
-        ['ย้ายออกไปไซต์อื่น', st.FIXED.moved, st.RENTAL.moved, st.FIXED.moved + st.RENTAL.moved],
-        ['ยังไม่ตรวจ', st.FIXED.pending, st.RENTAL.pending, st.FIXED.pending + st.RENTAL.pending],
-        [],
-        ['พบเพิ่มนอกทะเบียน (รายการ)', unlistedList.length],
-        ['คิดเป็นความคืบหน้า',
-          (st.FIXED.total + st.RENTAL.total
-            ? Math.round((st.FIXED.done + st.RENTAL.done) * 100 / (st.FIXED.total + st.RENTAL.total))
-            : 0) + '%']
+        ['ออกรายงานเมื่อ', thaiDT(new Date().toISOString())], ['ออกโดย', inspectorName()]];
+      info.forEach((row, i) => { put(3 + i, 1, row[0], true); put(3 + i, 2, row[1]); });
+      let r = 3 + info.length + 1;
+      ['รายการ', 'Fixed Assets', 'ของเช่า', 'รวม'].forEach((h, i) => {
+        const cell = put(r, 1 + i, h, true);
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDF1F7' } };
+        cell.border = BORDER;
+      });
+      const sumRows = [
+        ['ทรัพย์สินตามทะเบียน', st.FIXED.total, st.RENTAL.total],
+        ['ตรวจแล้ว', st.FIXED.done, st.RENTAL.done],
+        ['พบ', st.FIXED.found, st.RENTAL.found],
+        ['ไม่พบ', st.FIXED.notfound, st.RENTAL.notfound],
+        ['ย้ายออกไปไซต์อื่น', st.FIXED.moved, st.RENTAL.moved],
+        ['ยังไม่ตรวจ', st.FIXED.pending, st.RENTAL.pending]
       ];
+      sumRows.forEach((row, i) => {
+        const rr = r + 1 + i;
+        put(rr, 1, row[0]);
+        put(rr, 2, row[1]);
+        put(rr, 3, row[2]);
+        put(rr, 4, row[1] + row[2], true);
+        for (let c = 1; c <= 4; c++) {
+          sum.getCell(rr, c).border = BORDER;
+          if (c > 1) sum.getCell(rr, c).alignment = { horizontal: 'center' };
+        }
+      });
+      r += sumRows.length + 2;
+      put(r, 1, 'พบเพิ่มนอกทะเบียน (RT code)', true); put(r, 2, unlistedList.length);
+      put(r + 1, 1, 'RT code ที่พบซ้ำมากกว่า 1 ชิ้น', true); put(r + 1, 2, dupCodes.length);
+      put(r + 2, 1, 'จำนวนชิ้นส่วนเกินจากการใช้ RT code ซ้ำ', true); put(r + 2, 2, extraPieces);
+      put(r + 3, 1, 'ความคืบหน้า', true);
+      put(r + 3, 2, (st.FIXED.total + st.RENTAL.total
+        ? Math.round((st.FIXED.done + st.RENTAL.done) * 100 / (st.FIXED.total + st.RENTAL.total)) : 0) + '%');
+      r += 5;
+      if (dupCodes.length) {
+        put(r, 1, 'RT code ที่ใช้ซ้ำหลายชิ้น', true);
+        r++;
+        ['RT code', 'ชื่อทรัพย์สิน', 'จำนวนชิ้น'].forEach((h, i) => {
+          const cell = put(r, 1 + i, h, true);
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3D6' } };
+          cell.border = BORDER;
+        });
+        dupCodes.forEach((dc, i) => {
+          const a = state.master.find((m) => m.inventoryNumber === dc.inv);
+          put(r + 1 + i, 1, dc.inv);
+          put(r + 1 + i, 2, a ? (a.description || '') : '(นอกทะเบียน)');
+          put(r + 1 + i, 3, dc.n);
+        });
+        r += dupCodes.length + 2;
+      }
       if (unlistedList.length) {
-        sum.push([], ['รายการที่พบเพิ่มนอกทะเบียน']);
-        sum.push(['รหัสทรัพย์สิน', 'คำอธิบาย', 'ผู้ตรวจ', 'เวลาตรวจ', 'ตำแหน่ง', 'หมายเหตุ']);
-        unlistedList.forEach((l) => {
-          sum.push([l.inventoryNumber, l.unlistedDesc || '', l.inspector || '',
-            thaiDT(l.verifiedAt), l.locationText || '', l.note || '']);
+        put(r, 1, 'รายการที่พบเพิ่มนอกทะเบียน', true);
+        r++;
+        ['RT code', 'คำอธิบาย', 'ผู้บันทึก', 'เวลาที่บันทึก', 'ตำแหน่ง', 'หมายเหตุ'].forEach((h, i) => {
+          const cell = put(r, 1 + i, h, true);
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDF1F7' } };
+          cell.border = BORDER;
+        });
+        unlistedList.forEach((l, i) => {
+          put(r + 1 + i, 1, l.inventoryNumber);
+          put(r + 1 + i, 2, l.unlistedDesc || '');
+          put(r + 1 + i, 3, l.inspector || '');
+          put(r + 1 + i, 4, thaiDT(l.verifiedAt));
+          put(r + 1 + i, 5, l.locationText || '');
+          put(r + 1 + i, 6, l.note || '');
         });
       }
 
-      // ══ ชีท 2-3: ฟอร์มรายงานเดิม (Yes / No แยกคอลัมน์) ══
-      const ynOf = (a) => {
-        const l = state.latest.get(a.inventoryNumber);
-        const c = classify(l);
-        return {
-          yes: c === 'found' ? '✓' : '',
-          no: c === 'notfound' ? '✓' : '',
-          site: l && c === 'moved' ? (l.moveToSite || '') : '',
-          doc: l && c === 'moved' ? (l.moveDocNo || '') : '',
-          date: l && c === 'moved' && l.moveDate ? thaiD(l.moveDate) : '',
-          note: l ? [l.note || '', l.locationText ? 'ตำแหน่ง ' + l.locationText : '',
-            l.inspector ? '(' + l.inspector + ' ' + thaiDT(l.verifiedAt) + ')' : '']
-            .filter(Boolean).join(' ') : ''
-        };
-      };
-      // Fixed Assets — 15 คอลัมน์ ตามฟอร์มต้นฉบับ
-      const fixedRows = reportHead(s, 'รายงานการตรวจสอบทรัพย์สิน Fixed Assets', 15);
-      fixedRows.push(['NO.', '', '', '', 'Inventory Number', 'Description', '', 'Staff – Text',
-        'Current Site', 'ผลการตรวจเช็ค', '', '', '', '', 'หมายเหตุ']);
-      fixedRows.push(['', 'Asset Class', 'Asset Number', 'Sub Numb', '', '', 'Serial Number', '', '',
-        'Yes', 'No', 'ย้ายออก', '', '', '']);
-      fixedRows.push(['', '', '', '', '', '', '', '', '', '', '', 'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', '']);
-      state.master.filter((a) => a.assetType === 'FIXED').forEach((a, i) => {
-        const y = ynOf(a);
-        fixedRows.push([i + 1, a.assetClass || '', a.assetNumber || '', a.subNumber || '',
+      // ══ ชีท 2: ทรัพย์สิน Fixed Assets (ฟอร์มเดิม + คอลัมน์เสริม) ══
+      const fixedRows = state.master.filter((a) => a.assetType === 'FIXED').map((a, i) => {
+        const y = reportCells(a);
+        return [i + 1, a.assetClass || '', a.assetNumber || '', a.subNumber || '',
           a.inventoryNumber, a.description || '', a.serialNumber || '', a.staffText || '',
-          a.currentSite || '', y.yes, y.no, y.site, y.doc, y.date, y.note]);
+          a.currentSite || '', y.yes, y.no, y.site, y.doc, y.date, y.note,
+          y.pieces, y.by, y.at, y.where, y.how];
       });
-      // ของเช่า — 12 คอลัมน์
-      const rentalRows = reportHead(s, 'รายงานการตรวจสอบทรัพย์สิน ของเช่า', 12);
-      rentalRows.push(['NO.', 'Material', 'Description', 'Inventory Number', '', '',
-        'ผลการตรวจเช็ค', '', '', '', '', 'หมายเหตุ']);
-      rentalRows.push(['', '', '', '', 'Plan', 'Sloc', 'Yes', 'No', 'ย้ายออก', '', '', '']);
-      rentalRows.push(['', '', '', '', '', '', '', '', 'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', '']);
-      state.master.filter((a) => a.assetType === 'RENTAL').forEach((a, i) => {
-        const y = ynOf(a);
-        rentalRows.push([i + 1, a.materialCode || '', a.description || '', a.inventoryNumber,
-          a.plant || '', a.sloc || '', y.yes, y.no, y.site, y.doc, y.date, y.note]);
+      buildFormSheet(wb, s, {
+        sheetName: 'ทรัพย์สิน Fixed Assets',
+        title: 'รายงานการตรวจสอบทรัพย์สิน Fixed Assets',
+        widths: [5, 10, 13, 8, 19, 34, 15, 20, 15, 6, 6, 12, 13, 13, 30, 9, 20, 18, 18, 9],
+        descCol: 5, yesCol: 9, noCol: 10, pieceCol: 15,
+        rows: fixedRows,
+        head: [
+          { r1: 6, c1: 1, r2: 8, c2: 1, text: 'NO.' },
+          { r1: 7, c1: 2, r2: 8, c2: 2, text: 'Asset Class' },
+          { r1: 7, c1: 3, r2: 8, c2: 3, text: 'Asset Number' },
+          { r1: 7, c1: 4, r2: 8, c2: 4, text: 'Sub Numb' },
+          { r1: 6, c1: 5, r2: 8, c2: 5, text: 'Inventory Number', fill: 'FFDCE6F3' },
+          { r1: 6, c1: 6, r2: 8, c2: 6, text: 'Description', fill: 'FFDCE6F3' },
+          { r1: 7, c1: 7, r2: 8, c2: 7, text: 'Serial Number' },
+          { r1: 6, c1: 8, r2: 8, c2: 8, text: 'Staff – Text' },
+          { r1: 6, c1: 9, r2: 8, c2: 9, text: 'Current Site' },
+          { r1: 6, c1: 10, r2: 6, c2: 14, text: 'ผลการตรวจเช็ค' },
+          { r1: 7, c1: 10, r2: 8, c2: 10, text: 'Yes', fill: 'FFE3F3EA' },
+          { r1: 7, c1: 11, r2: 8, c2: 11, text: 'No', fill: 'FFFBE6E3' },
+          { r1: 7, c1: 12, r2: 7, c2: 14, text: 'ย้ายออก' },
+          { r1: 8, c1: 12, r2: 8, c2: 12, text: 'ส่งไป SITE' },
+          { r1: 8, c1: 13, r2: 8, c2: 13, text: 'เลขที่ใบส่ง' },
+          { r1: 8, c1: 14, r2: 8, c2: 14, text: 'วันที่ส่ง' },
+          { r1: 6, c1: 15, r2: 8, c2: 15, text: 'หมายเหตุ' }
+        ].concat(EXTRA_HEAD.map((t, i) => ({
+          r1: 6, c1: 16 + i, r2: 8, c2: 16 + i, text: t, fill: 'FFF2F2F2'
+        })))
       });
-      const logRows = [['เวลาตรวจ', 'Inventory Number', 'ประเภท', 'ผล', 'วิธี', 'ผู้ตรวจ',
-        'ตำแหน่ง', 'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', 'GPS', 'หมายเหตุ', 'นอกทะเบียน',
-        'คำอธิบายนอกทะเบียน', 'จำนวนรูป', 'สถานะส่ง']];
-      logsAll.slice().sort((a, b) => String(a.verifiedAt).localeCompare(String(b.verifiedAt)))
-        .forEach((l) => {
-          logRows.push([thaiDT(l.verifiedAt), l.inventoryNumber,
-            l.assetType === 'RENTAL' ? 'ของเช่า' : (l.assetType === 'UNLISTED' ? 'นอกทะเบียน' : 'Fixed'),
-            statusLabel(l),
-            l.method, l.inspector || '', l.locationText || '', l.moveToSite || '', l.moveDocNo || '',
-            l.moveDate ? thaiD(l.moveDate) : '',
-            l.gpsLat != null ? l.gpsLat + ',' + l.gpsLng : '',
-            l.note || '', l.unregistered ? 'ใช่' : '', l.unlistedDesc || '',
-            (l.photoPaths || []).length || l.photoCount || 0,
-            l.pending ? 'รอส่ง' : 'ส่งแล้ว']);
-        });
-      const wb = XLSX.utils.book_new();
-      const wsSum = XLSX.utils.aoa_to_sheet(sum);
-      wsSum['!cols'] = [{ wch: 30 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 24 }];
 
-      const wsFixed = XLSX.utils.aoa_to_sheet(fixedRows);
-      wsFixed['!cols'] = [{ wch: 5 }, { wch: 10 }, { wch: 13 }, { wch: 8 }, { wch: 19 }, { wch: 34 },
-        { wch: 15 }, { wch: 20 }, { wch: 15 }, { wch: 6 }, { wch: 6 }, { wch: 12 }, { wch: 13 },
-        { wch: 13 }, { wch: 34 }];
-      // หัวตาราง 3 ชั้นแบบฟอร์มเดิม (แถว 6-8 → index 5-7)
-      wsFixed['!merges'] = [
-        mergeRange(0, 0, 0, 14),
-        mergeRange(5, 0, 7, 0), mergeRange(5, 4, 7, 4), mergeRange(5, 5, 7, 5),
-        mergeRange(5, 7, 7, 7), mergeRange(5, 8, 7, 8), mergeRange(5, 14, 7, 14),
-        mergeRange(6, 1, 7, 1), mergeRange(6, 2, 7, 2), mergeRange(6, 3, 7, 3), mergeRange(6, 6, 7, 6),
-        mergeRange(5, 9, 5, 13), mergeRange(6, 9, 7, 9), mergeRange(6, 10, 7, 10),
-        mergeRange(6, 11, 6, 13)
-      ];
-      const wsRental = XLSX.utils.aoa_to_sheet(rentalRows);
-      wsRental['!cols'] = [{ wch: 5 }, { wch: 14 }, { wch: 34 }, { wch: 19 }, { wch: 8 }, { wch: 8 },
-        { wch: 6 }, { wch: 6 }, { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 34 }];
-      wsRental['!merges'] = [
-        mergeRange(0, 0, 0, 11),
-        mergeRange(5, 0, 7, 0), mergeRange(5, 1, 7, 1), mergeRange(5, 2, 7, 2), mergeRange(5, 3, 7, 3),
-        mergeRange(5, 11, 7, 11),
-        mergeRange(6, 4, 7, 4), mergeRange(6, 5, 7, 5),
-        mergeRange(5, 6, 5, 10), mergeRange(6, 6, 7, 6), mergeRange(6, 7, 7, 7),
-        mergeRange(6, 8, 6, 10)
-      ];
-      XLSX.utils.book_append_sheet(wb, wsSum, 'สรุปผล');
-      XLSX.utils.book_append_sheet(wb, wsFixed, 'ทรัพย์สิน Fixed Assets');
-      XLSX.utils.book_append_sheet(wb, wsRental, 'ทรัพย์สินของเช่า');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(logRows), 'ประวัติการตรวจทั้งหมด');
-      const d = s.countDateFrom ? new Date(s.countDateFrom + 'T00:00:00') : new Date();
-      XLSX.writeFile(wb, 'Asset_' + s.site + '_' + d.getDate() + '.' + (d.getMonth() + 1) +
-        '.' + String(d.getFullYear() + 543).slice(-2) + '.xlsx');
+      // ══ ชีท 3: ทรัพย์สินของเช่า ══
+      const rentalRows = state.master.filter((a) => a.assetType === 'RENTAL').map((a, i) => {
+        const y = reportCells(a);
+        return [i + 1, a.materialCode || '', a.description || '', a.inventoryNumber,
+          a.plant || '', a.sloc || '', y.yes, y.no, y.site, y.doc, y.date, y.note,
+          y.pieces, y.by, y.at, y.where, y.how];
+      });
+      buildFormSheet(wb, s, {
+        sheetName: 'ทรัพย์สินของเช่า',
+        title: 'รายงานการตรวจสอบทรัพย์สิน ของเช่า',
+        widths: [5, 14, 34, 19, 8, 8, 6, 6, 12, 13, 13, 30, 9, 20, 18, 18, 9],
+        descCol: 2, yesCol: 6, noCol: 7, pieceCol: 12,
+        rows: rentalRows,
+        head: [
+          { r1: 6, c1: 1, r2: 8, c2: 1, text: 'NO.' },
+          { r1: 6, c1: 2, r2: 8, c2: 2, text: 'Material' },
+          { r1: 6, c1: 3, r2: 8, c2: 3, text: 'Description', fill: 'FFDCE6F3' },
+          { r1: 6, c1: 4, r2: 8, c2: 4, text: 'Inventory Number', fill: 'FFDCE6F3' },
+          { r1: 7, c1: 5, r2: 8, c2: 5, text: 'Plan' },
+          { r1: 7, c1: 6, r2: 8, c2: 6, text: 'Sloc' },
+          { r1: 6, c1: 7, r2: 6, c2: 11, text: 'ผลการตรวจเช็ค' },
+          { r1: 7, c1: 7, r2: 8, c2: 7, text: 'Yes', fill: 'FFE3F3EA' },
+          { r1: 7, c1: 8, r2: 8, c2: 8, text: 'No', fill: 'FFFBE6E3' },
+          { r1: 7, c1: 9, r2: 7, c2: 11, text: 'ย้ายออก' },
+          { r1: 8, c1: 9, r2: 8, c2: 9, text: 'ส่งไป SITE' },
+          { r1: 8, c1: 10, r2: 8, c2: 10, text: 'เลขที่ใบส่ง' },
+          { r1: 8, c1: 11, r2: 8, c2: 11, text: 'วันที่ส่ง' },
+          { r1: 6, c1: 12, r2: 8, c2: 12, text: 'หมายเหตุ' }
+        ].concat(EXTRA_HEAD.map((t, i) => ({
+          r1: 6, c1: 13 + i, r2: 8, c2: 13 + i, text: t, fill: 'FFF2F2F2'
+        })))
+      });
+
+      // ══ ชีท 4: รูปถ่ายยืนยัน (ฝังรูปจริง โครงเดียวกับ MCR) ══
+      await buildPhotoSheet(wb, logsAll);
+
+      // ══ ชีท 5: ประวัติการตรวจทั้งหมด ══
+      const hist = wb.addWorksheet('ประวัติการตรวจทั้งหมด', {
+        views: [{ state: 'frozen', ySplit: 1 }]
+      });
+      const histHead = ['เวลาที่บันทึก', 'RT code', 'ชิ้นที่', 'ประเภท', 'ผล', 'วิธี', 'ผู้บันทึก',
+        'ตำแหน่งที่ตรวจ', 'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', 'GPS', 'หมายเหตุ',
+        'นอกทะเบียน', 'คำอธิบายนอกทะเบียน', 'จำนวนรูป', 'สถานะส่ง'];
+      [20, 19, 7, 12, 14, 9, 22, 20, 12, 13, 13, 20, 30, 10, 26, 9, 10]
+        .forEach((w, i) => { hist.getColumn(i + 1).width = w; });
+      histHead.forEach((h, i) => {
+        const cell = hist.getCell(1, i + 1);
+        cell.value = h;
+        styleHeadCell(cell);
+      });
+      logsAll.slice().sort((a, b) => String(a.verifiedAt).localeCompare(String(b.verifiedAt)))
+        .forEach((l, i) => {
+          const row = [thaiDT(l.verifiedAt), l.inventoryNumber, Number(l.pieceNo) || 1,
+            l.assetType === 'RENTAL' ? 'ของเช่า' : (l.assetType === 'UNLISTED' ? 'นอกทะเบียน' : 'Fixed'),
+            statusLabel(l), l.method, l.inspector || '', l.locationText || '',
+            l.moveToSite || '', l.moveDocNo || '', l.moveDate ? thaiD(l.moveDate) : '',
+            l.gpsLat != null ? l.gpsLat + ',' + l.gpsLng : '', l.note || '',
+            l.unregistered ? 'ใช่' : '', l.unlistedDesc || '',
+            (l.photoPaths || []).length || l.photoCount || 0,
+            l.pending ? 'รอส่ง' : 'ส่งแล้ว'];
+          row.forEach((v, c) => {
+            const cell = hist.getCell(2 + i, c + 1);
+            cell.value = v === '' ? null : v;
+            cell.font = { name: 'Tahoma', size: 9 };
+            cell.border = BORDER;
+          });
+        });
+      hist.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: histHead.length } };
+
+      busy('กำลังบันทึกไฟล์...');
+      const buf = await wb.xlsx.writeBuffer();
+      const d2 = s.countDateFrom ? new Date(s.countDateFrom + 'T00:00:00') : new Date();
+      const name = 'Asset_' + s.site + '_' + d2.getDate() + '.' + (d2.getMonth() + 1) +
+        '.' + String(d2.getFullYear() + 543).slice(-2) + '.xlsx';
+      const blob = new Blob([buf], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast('สร้างไฟล์ ' + name + ' แล้ว', 'success');
     } catch (e) {
       toast('Export ไม่สำเร็จ: ' + e.message, 'error');
     } finally {
       busyHide();
     }
+  }
+
+  /** ชีทรูปถ่าย: ฝังรูปจริงลงไฟล์ (โครงเดียวกับชีท "รูปถ่ายยืนยัน" ของ MCR) */
+  async function buildPhotoSheet(wb, logsAll) {
+    // รูปที่ส่งขึ้นเซิร์ฟเวอร์แล้ว
+    const items = [];
+    logsAll.forEach((l) => {
+      (l.photoPaths || []).forEach((p) => { items.push({ log: l, path: p }); });
+    });
+    // รูปที่ยังค้างในคิวเครื่องนี้ (ใช้ภาพในเครื่องได้เลย ไม่ต้องโหลด)
+    state.queueItems.forEach((it) => {
+      if (state.activeSession && it.sessionId !== state.activeSession.sessionId) return;
+      (it.photos || []).forEach((p) => {
+        if (p.dataUrl) items.push({ log: queueToLog(it), dataUrl: p.dataUrl });
+      });
+    });
+    if (!items.length) return null;
+
+    const ws = wb.addWorksheet('รูปถ่ายยืนยัน');
+    [6, 19, 30, 14, 20, 18, 18, 52].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    ['ลำดับ', 'RT code', 'ชื่อทรัพย์สิน', 'ผลตรวจ', 'ผู้บันทึก', 'เวลาที่บันทึก', 'ตำแหน่งที่ตรวจ', 'รูปถ่าย']
+      .forEach((h, i) => { styleHeadCell(ws.getCell(1, i + 1)); ws.getCell(1, i + 1).value = h; });
+
+    let row = 2;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      busy('กำลังใส่รูปภาพ ' + (i + 1) + ' / ' + items.length + '...');
+      let base64 = null;
+      if (it.dataUrl) {
+        base64 = String(it.dataUrl).split(',').pop();
+      } else {
+        try { base64 = await AssetStore.downloadPhoto(it.path); }
+        catch (e) { base64 = null; }
+      }
+      const asset = state.master.find((m) => m.inventoryNumber === it.log.inventoryNumber);
+      const vals = [row - 1, it.log.inventoryNumber,
+        asset ? (asset.description || '') : (it.log.unlistedDesc || '(นอกทะเบียน)'),
+        statusLabel(it.log), it.log.inspector || '', thaiDT(it.log.verifiedAt),
+        it.log.locationText || ''];
+      vals.forEach((v, c) => {
+        const cell = ws.getCell(row, c + 1);
+        cell.value = v === '' ? null : v;
+        cell.font = { name: 'Tahoma', size: 9 };
+        cell.alignment = { vertical: 'top', wrapText: true };
+        cell.border = BORDER;
+      });
+      ws.getCell(row, 8).border = BORDER;
+      if (base64) {
+        try {
+          const id = wb.addImage({ base64: base64, extension: 'jpeg' });
+          ws.addImage(id, {
+            tl: { col: 7.1, row: row - 1 + 0.1 },
+            ext: { width: 360, height: 270 }
+          });
+          ws.getRow(row).height = 205;
+        } catch (e) {
+          ws.getCell(row, 8).value = 'ใส่รูปไม่สำเร็จ';
+        }
+      } else {
+        ws.getCell(row, 8).value = 'โหลดรูปไม่สำเร็จ';
+        ws.getRow(row).height = 20;
+      }
+      row++;
+    }
+    return ws;
   }
 
   // ── จัดการบัญชี ────────────────────────────────────────────────────────────
@@ -2418,7 +2820,7 @@ const App = (() => {
     clearSelection, applySelection, quickSave, deleteSelectedHistory, setTheme,
     openAsset, closeRecord, chooseResult, saveRecord,
     addPhotos, removePhoto, viewPhoto, deleteLogEntry,
-    openScanner, closeScanner, resumeScan, scanUnlisted,
+    openScanner, closeScanner, resumeScan, scanUnlisted, toggleTorch, dupChoose,
     openBulk, closeBulk, setBulkCat, setBulkResult, bulkSubmit,
     formatBulkTail, insertYY, setBulkAuto,
     openUnlisted, exportExcel, toggleSection,

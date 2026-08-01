@@ -765,6 +765,37 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
   border: 3px solid #E9A23B; box-shadow: 0 0 0 4000px rgba(0,0,0,.35);
   pointer-events: none;
 }
+.scanner-tools { display: flex; align-items: center; gap: 8px; }
+.scan-tool {
+  width: 38px; height: 38px; border-radius: 50%; border: 0; cursor: pointer;
+  background: rgba(255,255,255,.85); font-size: 17px;
+}
+.scan-tool.on { background: #E9A23B; }
+#scanCanvas { display: none; }
+.scan-hint {
+  position: absolute; left: 0; right: 0; z-index: 3; text-align: center;
+  top: calc(50% + 165px); color: #fff; font-size: 13px; text-shadow: 0 1px 4px #000;
+  pointer-events: none;
+}
+/* ป้ายจำนวนชิ้นเมื่อ RT code ถูกใช้ซ้ำ */
+.dup-badge {
+  display: inline-block; margin-left: 4px; padding: 2px 7px; border-radius: var(--r-sm);
+  background: var(--dmg-bg); color: var(--dmg); font-size: 11.5px; font-weight: 700;
+}
+.dup-sheet { max-width: 460px; }
+.dup-pieces { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.dup-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.dup-btn {
+  text-align: left; border: 1.5px solid var(--line); background: var(--surface);
+  border-radius: var(--r); padding: 12px 14px; cursor: pointer; color: var(--text);
+  display: flex; flex-direction: column; gap: 2px; font-family: inherit;
+}
+.dup-btn b { font-size: 15px; }
+.dup-btn small { font-size: 12.5px; color: var(--muted); }
+.dup-btn.dup-new { border-color: var(--ok); }
+.dup-btn.dup-new:hover { background: var(--ok-bg); }
+.dup-btn.dup-new b { color: var(--ok); }
+.dup-btn.dup-edit:hover { background: var(--accent-tint); border-color: var(--accent); }
 .scan-notfound {
   position: absolute; left: 12px; right: 12px;
   bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 3;

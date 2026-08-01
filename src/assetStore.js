@@ -226,15 +226,33 @@ const AssetStore = (function () {
   }
   async function saveVerify(rec) {
     const row = objToRow(rec);
-    const { data, error } = await getClient().from('asset_verify_log')
-      .insert(row).select().maybeSingle();
-    if (error) {
-      if (error.code === '23505' || /duplicate key/i.test(error.message || '')) {
+    let res = await getClient().from('asset_verify_log').insert(row).select().maybeSingle();
+    // ยังไม่ได้รัน asset-duplicates.sql → ตัดคอลัมน์ piece_no ออกแล้วลองใหม่ ไม่ให้บันทึกพัง
+    if (res.error && /piece_no/.test(res.error.message || '')) {
+      const legacy = Object.assign({}, row);
+      delete legacy.piece_no;
+      res = await getClient().from('asset_verify_log').insert(legacy).select().maybeSingle();
+    }
+    if (res.error) {
+      if (res.error.code === '23505' || /duplicate key/i.test(res.error.message || '')) {
         return { duplicate: true };
       }
-      throw new Error(error.message);
+      throw new Error(res.error.message);
     }
-    return rowToObj(data);
+    return rowToObj(res.data);
+  }
+  /** โหลดรูปจาก Storage เป็น base64 (ใช้ตอนฝังรูปลงไฟล์ Excel) */
+  async function downloadPhoto(path) {
+    const { data, error } = await getClient().storage.from(BUCKET()).download(path);
+    fail(error);
+    const buf = await data.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    const chunk = 8192;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(bin);
   }
   async function deleteLog(logId) {
     const { error } = await getClient().from('asset_verify_log')
@@ -307,7 +325,7 @@ const AssetStore = (function () {
     listSessions, createSession, updateSession, deleteSession,
     loadMaster, importAssets,
     loadLogs, loadLogsSummary, saveVerify, deleteLog, deleteLogsFor, subscribeLogs, unsubscribe,
-    uploadPhoto, photoUrls
+    uploadPhoto, photoUrls, downloadPhoto
   };
 })();
 window.AssetStore = AssetStore;

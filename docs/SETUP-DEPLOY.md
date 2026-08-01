@@ -21,7 +21,11 @@
 1. ในโปรเจกต์ เมนูซ้าย → **SQL Editor** → **New query**
 2. เปิดไฟล์ `asset-verify/schema.sql` คัดลอก**ทั้งไฟล์** วางลงช่อง แล้วกด **Run**
 3. **New query** อีกครั้ง → เปิดไฟล์ `asset-verify/asset-rounds.sql` คัดลอกทั้งไฟล์ → **Run**
-4. ต้องขึ้น `Success` (มีข้อความ notice สีเหลืองได้ ไม่เป็นไร)
+4. **New query** อีกครั้ง → เปิดไฟล์ `asset-verify/asset-duplicates.sql` คัดลอกทั้งไฟล์ → **Run**
+5. ต้องขึ้น `Success` (มีข้อความ notice สีเหลืองได้ ไม่เป็นไร)
+
+- `asset-duplicates.sql` = รองรับ RT code เดียวกันที่ติดอยู่กับของหลายชิ้น (คอลัมน์ `piece_no`)
+  ถ้ายังไม่รัน แอปยังบันทึกได้ปกติแต่จะนับเป็นชิ้นเดียวเสมอ
 
 - `schema.sql` = ตาราง `profiles`, `asset_master`, `asset_verify_log`, ระบบสิทธิ์ (RLS),
   Realtime และ Storage bucket `asset-files`
