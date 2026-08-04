@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.3.1';
+  const APP_VERSION = 'v2.3.2';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -894,7 +894,10 @@ const App = (() => {
       if (c >= 0) { hr = r; invCol = c; break; }
     }
     if (hr < 0) return null;
-    const width = Math.max((rows[hr] || []).length, (rows[hr + 1] || []).length);
+    let width = Math.max((rows[hr] || []).length, (rows[hr + 1] || []).length);
+    for (let r = hr + 1; r < Math.min(rows.length, hr + 12); r++) {
+      width = Math.max(width, (rows[r] || []).length);
+    }
     const labels = [];
     for (let c = 0; c < width; c++) {
       labels[c] = normHead((rows[hr] || [])[c]) || normHead((rows[hr + 1] || [])[c]) || '';
@@ -915,6 +918,24 @@ const App = (() => {
     const isFixedSheet = col(['ASSET NUMBER']) >= 0 || col(['ASSET CLASS']) >= 0 ||
       col(['SUB NUMB', 'SUB NUMBER']) >= 0 || col(['CURRENT SITE']) >= 0;
     if (!isRental && !isFixedSheet) return { skipped: true, items: [] };
+    // บางไฟล์หัวตารางกับข้อมูลจริงสลับคอลัมน์กัน (เจอในไฟล์ VMS1: หัวเขียน
+    // Inventory Number แล้ว Description แต่ข้อมูลใต้หัวเรียงสลับกัน) จึงยึด
+    // "คอลัมน์ที่มีรหัส RT อยู่จริง" เป็นหลัก แล้วสลับคำอธิบายกลับให้ถูกคู่
+    let swapped = false;
+    let bestCol = -1;
+    let bestHits = 0;
+    for (let c = 0; c < width; c++) {
+      let hits = 0;
+      for (let r = hr + 1; r < Math.min(rows.length, hr + 31); r++) {
+        if (normalizeCode((rows[r] || [])[c])) hits++;
+      }
+      if (hits > bestHits) { bestHits = hits; bestCol = c; }
+    }
+    const headInvCol = invCol;
+    if (bestHits > 0 && bestCol >= 0 && bestCol !== invCol) {
+      invCol = bestCol;
+      swapped = true;
+    }
     const cols = isRental
       ? { material: col(['MATERIAL']), desc: col(['DESCRIPTION']),
           plant: col(['PLAN', 'PLANT']), sloc: col(['SLOC']) }
@@ -922,6 +943,8 @@ const App = (() => {
           subNumber: col(['SUB NUMB', 'SUB NUMBER']), desc: col(['DESCRIPTION']),
           serial: col(['SERIAL NUMBER']), staff: col(['STAFF - TEXT', 'STAFF-TEXT', 'STAFF TEXT']),
           site: col(['CURRENT SITE']) };
+    // หัวตาราง Description ไปชี้คอลัมน์ที่จริงๆ เก็บรหัส → คำอธิบายอยู่ที่คอลัมน์ที่หัวบอกว่าเป็นรหัส
+    if (swapped && cols.desc === invCol) cols.desc = headInvCol;
     // หา Site/Cost center จากหัวรายงาน (แถวบนก่อนหัวตาราง)
     let costCenter = '';
     for (let r = 0; r < hr; r++) {
@@ -955,7 +978,10 @@ const App = (() => {
       }
       items.push(item);
     }
-    return { type: isRental ? 'RENTAL' : 'FIXED', items: items, costCenter: costCenter };
+    return {
+      type: isRental ? 'RENTAL' : 'FIXED', items: items,
+      costCenter: costCenter, swapped: swapped
+    };
   }
   async function readMasterFile(event) {
     const file = event.target.files && event.target.files[0];
@@ -983,7 +1009,7 @@ const App = (() => {
           byInv.set(it.inventoryNumber, it);
           added++;
         });
-        used.push({ name: name, count: added, type: parsed.type });
+        used.push({ name: name, count: added, type: parsed.type, swapped: parsed.swapped });
       });
       const rows = Array.from(byInv.values());
       if (!rows.length) {
@@ -1013,6 +1039,9 @@ const App = (() => {
           (u.type === 'RENTAL' ? 'ของเช่า ' : 'Fixed ') + u.count + ')').join(' · ') +
         (skipped.length ? '<br><span class="hint-inline">ข้ามชีทที่ไม่ใช่ทะเบียน: ' +
           esc(skipped.join(', ')) + '</span>' : '') +
+        (used.some((u) => u.swapped) ? '<br><span class="hint-inline">หมายเหตุ: ชีท ' +
+          esc(used.filter((u) => u.swapped).map((u) => u.name).join(', ')) +
+          ' หัวตารางสลับที่กับข้อมูลจริง ระบบจับคอลัมน์รหัส/คำอธิบายให้ถูกต้องแล้ว</span>' : '') +
         (rental === 0 ? '<br><span class="warn-inline">ไม่พบรายการ "ทรัพย์สินของเช่า" ในไฟล์นี้ — ' +
           'ตรวจว่าชีทของเช่ามีหัวคอลัมน์ Material และ Inventory Number ครบ</span>' : '');
       el('importPreview').classList.remove('hidden');
