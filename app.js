@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.3.0';
+  const APP_VERSION = 'v2.3.1';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -907,7 +907,14 @@ const App = (() => {
       return -1;
     };
     const cell = (row, idx) => (idx >= 0 ? String(row[idx] == null ? '' : row[idx]).trim() : '');
-    const isRental = col(['MATERIAL']) >= 0;
+    // ชีทอื่นในไฟล์ที่ export ออกไป ("ประวัติการตรวจทั้งหมด" / "สรุปผล") ก็มีคอลัมน์
+    // Inventory Number เหมือนกัน ถ้าอ่านมาด้วยจะทับทะเบียนจริงจนประเภทและรายละเอียดเพี้ยน
+    // จึงรับเฉพาะชีทที่มีคอลัมน์เฉพาะของทะเบียนจริงเท่านั้น
+    // ชีทประวัติมีแค่ Inventory Number กับคอลัมน์ผลตรวจ ไม่มีคอลัมน์ทะเบียนพวกนี้เลย
+    const isRental = col(['MATERIAL']) >= 0 || col(['SLOC']) >= 0;
+    const isFixedSheet = col(['ASSET NUMBER']) >= 0 || col(['ASSET CLASS']) >= 0 ||
+      col(['SUB NUMB', 'SUB NUMBER']) >= 0 || col(['CURRENT SITE']) >= 0;
+    if (!isRental && !isFixedSheet) return { skipped: true, items: [] };
     const cols = isRental
       ? { material: col(['MATERIAL']), desc: col(['DESCRIPTION']),
           plant: col(['PLAN', 'PLANT']), sloc: col(['SLOC']) }
@@ -961,15 +968,27 @@ const App = (() => {
       const wb = window.XLSX.read(buf, { type: 'array' });
       const byInv = new Map();
       let costCenter = '';
+      const used = [];
+      const skipped = [];
       wb.SheetNames.forEach((name) => {
         const parsed = parseSheet(wb.Sheets[name]);
-        if (!parsed) return;
+        if (!parsed || parsed.skipped || !parsed.items.length) {
+          skipped.push(name);
+          return;
+        }
         if (!costCenter && parsed.costCenter) costCenter = parsed.costCenter;
-        parsed.items.forEach((it) => { byInv.set(it.inventoryNumber, it); });
+        let added = 0;
+        parsed.items.forEach((it) => {
+          if (byInv.has(it.inventoryNumber)) return;   // ชีทแรกที่เจอชนะ ไม่ให้ทับกันเอง
+          byInv.set(it.inventoryNumber, it);
+          added++;
+        });
+        used.push({ name: name, count: added, type: parsed.type });
       });
       const rows = Array.from(byInv.values());
       if (!rows.length) {
-        throw new Error('ไม่พบข้อมูลทรัพย์สินในไฟล์ — ต้องมีหัวคอลัมน์ "Inventory Number"');
+        throw new Error('ไม่พบทะเบียนทรัพย์สินในไฟล์ — ต้องมีชีทที่มีหัวคอลัมน์ "Inventory Number" ' +
+          'คู่กับ "Asset Number" (Fixed Assets) หรือ "Material" (ของเช่า)');
       }
       const fixed = rows.filter((r) => r.assetType === 'FIXED').length;
       const rental = rows.length - fixed;
@@ -989,7 +1008,13 @@ const App = (() => {
       el('importPreview').innerHTML =
         'อ่านไฟล์สำเร็จ — <b>' + rows.length + '</b> รายการ ' +
         '(Fixed Assets <b>' + fixed + '</b> · ของเช่า <b>' + rental + '</b>)' +
-        (cc ? '<br>Cost center ที่พบในไฟล์: <b>' + esc(cc) + '</b>' : '');
+        (cc ? '<br>Cost center ที่พบในไฟล์: <b>' + esc(cc) + '</b>' : '') +
+        '<br>อ่านจากชีท: ' + used.map((u) => esc(u.name) + ' (' +
+          (u.type === 'RENTAL' ? 'ของเช่า ' : 'Fixed ') + u.count + ')').join(' · ') +
+        (skipped.length ? '<br><span class="hint-inline">ข้ามชีทที่ไม่ใช่ทะเบียน: ' +
+          esc(skipped.join(', ')) + '</span>' : '') +
+        (rental === 0 ? '<br><span class="warn-inline">ไม่พบรายการ "ทรัพย์สินของเช่า" ในไฟล์นี้ — ' +
+          'ตรวจว่าชีทของเช่ามีหัวคอลัมน์ Material และ Inventory Number ครบ</span>' : '');
       el('importPreview').classList.remove('hidden');
       el('roundForm').classList.remove('hidden');
       el('roundSite').value = site;
@@ -997,6 +1022,11 @@ const App = (() => {
       if (!el('roundFrom').value) el('roundFrom').value = todayISO();
       if (!el('roundInspector').value) el('roundInspector').value = inspectorName();
     } catch (e) {
+      // อ่านไม่ผ่าน ต้องล้างผลของไฟล์ก่อนหน้าทิ้ง ไม่งั้นดูเหมือนอ่านไฟล์ใหม่สำเร็จ
+      state.importData = null;
+      el('importPreview').classList.add('hidden');
+      el('roundForm').classList.add('hidden');
+      el('uploadZoneText').textContent = 'แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน';
       toast(e.message, 'error');
     } finally {
       busyHide();

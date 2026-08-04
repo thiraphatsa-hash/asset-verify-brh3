@@ -836,6 +836,8 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 }
 .scan-notfound p { margin: 0 0 10px; font-size: 14px; }
 .nf-raw { font-size: 12.5px !important; color: var(--muted); word-break: break-all; }
+.hint-inline { color: var(--muted); font-size: 12.5px; }
+.warn-inline { color: var(--dmg); font-size: 12.5px; font-weight: 600; }
 .scan-nf-actions { display: flex; gap: 8px; }
 .scan-nf-actions button { flex: 1; }
 
