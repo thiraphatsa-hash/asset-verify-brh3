@@ -212,6 +212,30 @@ const AssetStore = (function () {
     return { inserted };
   }
 
+  /** แก้พื้นที่จัดเก็บของทรัพย์สินในทะเบียนรอบนั้น (ผู้ตรวจเติมเองหน้างานได้) */
+  async function setAssetLocation(sessionId, inventoryNumbers, location, locationCode) {
+    const list = (inventoryNumbers || []).filter(Boolean);
+    if (!sessionId || !list.length) return { updated: 0 };
+    const patch = { location: location || null };
+    if (locationCode !== undefined) patch.location_code = locationCode || null;
+    let updated = 0;
+    const chunk = 100;
+    for (let i = 0; i < list.length; i += chunk) {
+      const part = list.slice(i, i + chunk);
+      const { data, error } = await getClient().from('asset_master')
+        .update(patch).eq('session_id', sessionId).in('inventory_number', part)
+        .select('inventory_number');
+      if (error) {
+        if (/column .*location.* does not exist|schema cache/i.test(error.message || '')) {
+          throw new Error('ยังไม่ได้ติดตั้งคอลัมน์พื้นที่ — รันไฟล์ asset-location.sql ใน Supabase SQL Editor ก่อน');
+        }
+        throw new Error(error.message);
+      }
+      updated += (data || []).length;
+    }
+    return { updated: updated };
+  }
+
   // ── ผลตรวจ (append-only) ───────────────────────────────────────────────────
   async function loadLogs(sessionId) {
     if (!sessionId) return [];
@@ -356,7 +380,7 @@ const AssetStore = (function () {
     signIn, signOut, signUp, getSession, currentUser, getMyProfile,
     sendPasswordReset, listProfiles, updateProfile, deleteUserAccount, confirmUserEmail,
     listSessions, createSession, updateSession, deleteSession,
-    loadMaster, importAssets,
+    loadMaster, importAssets, setAssetLocation,
     loadLogs, loadLogsSummary, saveVerify, deleteLog, deleteLogsFor, subscribeLogs, unsubscribe,
     loadCounts, saveCount, deleteCount,
     uploadPhoto, photoUrls, downloadPhoto

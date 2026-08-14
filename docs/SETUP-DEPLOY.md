@@ -23,13 +23,16 @@
 3. **New query** อีกครั้ง → เปิดไฟล์ `asset-verify/asset-rounds.sql` คัดลอกทั้งไฟล์ → **Run**
 4. **New query** อีกครั้ง → เปิดไฟล์ `asset-verify/asset-duplicates.sql` คัดลอกทั้งไฟล์ → **Run**
 5. **New query** อีกครั้ง → เปิดไฟล์ `asset-verify/asset-counts.sql` คัดลอกทั้งไฟล์ → **Run**
-6. ต้องขึ้น `Success` (มีข้อความ notice สีเหลืองได้ ไม่เป็นไร)
+6. **New query** อีกครั้ง → เปิดไฟล์ `asset-verify/asset-location.sql` คัดลอกทั้งไฟล์ → **Run**
+7. ต้องขึ้น `Success` (มีข้อความ notice สีเหลืองได้ ไม่เป็นไร)
 
 - `asset-duplicates.sql` = รองรับ RT code เดียวกันที่ติดอยู่กับของหลายชิ้น (คอลัมน์ `piece_no`)
   ถ้ายังไม่รัน แอปยังบันทึกได้ปกติแต่จะนับเป็นชิ้นเดียวเสมอ
 - `asset-counts.sql` = ตาราง `asset_count_log` สำหรับ **โหมดนับจำนวนตามหมวด** (ของที่ไม่ทราบ RT code)
   และเปิดให้ **ผู้ตรวจลบรายการที่ตัวเองบันทึกผิดได้เอง** (เดิมลบได้เฉพาะ admin)
   ถ้ายังไม่รัน ปุ่ม "นับจำนวน" จะขึ้นข้อความเตือนให้รันไฟล์นี้ก่อน ส่วนอย่างอื่นใช้งานได้ตามปกติ
+- `asset-location.sql` = คอลัมน์ **พื้นที่จัดเก็บ** (`location`) ในทะเบียน — ใช้จำกัดขอบเขตการตรวจ
+  นำเข้าจากคอลัมน์ `Location` หรือ `Port ED - Text` ในไฟล์ทะเบียน และผู้ตรวจเติม/แก้เองหน้างานได้
 
 - `schema.sql` = ตาราง `profiles`, `asset_master`, `asset_verify_log`, ระบบสิทธิ์ (RLS),
   Realtime และ Storage bucket `asset-files`

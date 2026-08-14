@@ -26,6 +26,7 @@ asset-verify/
 ├── asset-rounds.sql    ⚠ รันต่อจาก schema.sql — ระบบรอบการตรวจนับ
 ├── asset-duplicates.sql ⚠ RT code เดียวติดของหลายชิ้น (piece_no)
 ├── asset-counts.sql    ⚠ โหมดนับจำนวนตามหมวด + ให้ผู้ตรวจลบของตัวเองได้
+├── asset-location.sql  ⚠ คอลัมน์พื้นที่จัดเก็บ (จำกัดขอบเขตการตรวจ)
 ├── reset.html          หน้าตั้งรหัสผ่านใหม่ (ปลายทางลิงก์รีเซ็ตจากอีเมล)
 ├── src/assetStore.js   data layer คุยกับ Supabase (window.AssetStore)
 ├── src/vendor/jsqr.min.js  ตัวถอดรหัส QR (Apache-2.0) เก็บไว้เองเพื่อให้สแกนได้แม้ไม่มีเน็ต

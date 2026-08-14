@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.4.0';
+  const APP_VERSION = 'v2.5.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -188,7 +188,7 @@ const App = (() => {
     page: 'home',
     home: { q: '', status: '', sort: 'created' },
     ui: {
-      type: 'FIXED', view: 'table', q: '', cat: '', staff: '', status: '', sort: 'inv',
+      type: 'FIXED', view: 'table', q: '', cat: '', staff: '', area: '', status: '', sort: 'inv',
       cols: { FIXED: null, RENTAL: null }        // null = อัตโนมัติตามขนาดจอ
     },
     act: { who: '', result: '', range: '', q: '', sort: 'new' },   // หน้าประวัติการบันทึก
@@ -385,8 +385,11 @@ const App = (() => {
           sent++;
         } catch (e) {
           it.lastError = e.message;
+          it.tries = (it.tries || 0) + 1;
           try { await qPut(it); } catch (e2) {}
-          break;   // เน็ตหลุด/สิทธิ์ไม่พอ — หยุดรอบนี้ไว้ retry ภายหลัง
+          // เน็ตหลุด = หยุดทั้งรอบไว้ส่งใหม่ทีหลัง · error ถาวร (เช่นยังไม่ได้รัน SQL,
+          // สิทธิ์ไม่พอ, ข้อมูลผิดรูป) = ข้ามตัวนี้ไปส่งตัวอื่นต่อ ไม่ให้ค้างทั้งคิว
+          if (isNetworkError(e.message)) break;
         }
       }
     } finally {
@@ -395,9 +398,72 @@ const App = (() => {
       if (sent) { afterDataChange(); toast('ส่งผลตรวจค้างส่งแล้ว ' + sent + ' รายการ', 'success'); }
     }
   }
+  function isNetworkError(msg) {
+    return /failed to fetch|networkerror|network request failed|timeout|load failed|offline/i
+      .test(String(msg || ''));
+  }
   function flushQueueNow() {
+    openQueuePanel();
+  }
+  // ── รายการค้างส่ง: ดูสาเหตุที่ส่งไม่ผ่าน / ลองใหม่ / ทิ้งรายการที่ค้าง ────────
+  function openQueuePanel() {
+    renderQueuePanel();
+    el('queueModal').classList.remove('hidden');
+  }
+  function closeQueuePanel() { el('queueModal').classList.add('hidden'); }
+  function renderQueuePanel() {
+    const items = state.queueItems.slice();
+    el('queueSub').textContent = items.length
+      ? 'ค้างอยู่ ' + items.length + ' รายการ' + (navigator.onLine ? '' : ' · ตอนนี้ออฟไลน์')
+      : 'ส่งครบแล้ว ไม่มีรายการค้าง';
+    el('queueList').innerHTML = items.length ? items.map((it) => {
+      const what = it.kind === 'count'
+        ? 'นับจำนวน ' + esc(catLabel(it.categoryCode)) + ' = ' + it.counted + ' ชิ้น'
+        : esc(it.inventoryNumber) + ' · ' + esc(statusLabel(it));
+      return '<div class="q-row' + (it.lastError ? ' bad' : '') + '">' +
+        '<div><b>' + what + '</b>' +
+        '<small>' + esc(thaiDT(it.verifiedAt || it.countedAt)) + ' · ' + esc(it.inspector || '') +
+        ((it.photos || []).length ? ' · ' + it.photos.length + ' รูป' : '') + '</small>' +
+        (it.lastError ? '<small class="q-err">' + icon('alert') + ' ' + esc(it.lastError) +
+          (it.tries > 1 ? ' (ลองแล้ว ' + it.tries + ' ครั้ง)' : '') + '</small>' : '') +
+        '</div>' +
+        '<button class="qbtn del" type="button" title="ทิ้งรายการนี้" ' +
+        'onclick="App.dropQueueItem(\'' + esc(it.clientId) + '\')">' + icon('trash') + '</button>' +
+        '</div>';
+    }).join('') : '<p class="hint">ไม่มีรายการค้างส่ง</p>';
+    el('queueRetry').classList.toggle('hidden', !items.length);
+    el('queueDropAll').classList.toggle('hidden', !items.length);
+  }
+  async function retryQueue() {
     if (!navigator.onLine) return toast('ยังออฟไลน์อยู่ — จะส่งให้อัตโนมัติเมื่อเน็ตกลับมา', 'warn');
-    flushQueue();
+    await flushQueue();
+    renderQueuePanel();
+    if (!state.queueItems.length) closeQueuePanel();
+  }
+  async function dropQueueItem(clientId) {
+    const it = state.queueItems.find((q) => q.clientId === clientId);
+    if (!it) return;
+    const what = it.kind === 'count'
+      ? 'ยอดนับ ' + catLabel(it.categoryCode) + ' = ' + it.counted + ' ชิ้น'
+      : it.inventoryNumber;
+    if (!window.confirm('ทิ้งรายการค้างส่งนี้ถาวร?\n\n' + what +
+      '\n\nข้อมูลนี้จะหายไปเลย ถ้ายังต้องการให้บันทึกใหม่อีกครั้ง')) return;
+    try { await qDel(clientId); } catch (e) {}
+    state.queueItems = state.queueItems.filter((q) => q.clientId !== clientId);
+    afterDataChange();
+    renderQueuePanel();
+    toast('ทิ้งรายการค้างส่งแล้ว', 'success');
+  }
+  async function dropAllQueue() {
+    const n = state.queueItems.length;
+    if (!n) return;
+    if (!window.confirm('ทิ้งรายการค้างส่งทั้งหมด ' + n + ' รายการถาวร?\n\nข้อมูลที่ยังไม่ได้ส่งจะหายทั้งหมด')) return;
+    const ids = state.queueItems.map((q) => q.clientId);
+    for (let i = 0; i < ids.length; i++) { try { await qDel(ids[i]); } catch (e) {} }
+    state.queueItems = [];
+    afterDataChange();
+    renderQueuePanel();
+    toast('ล้างคิวค้างส่งแล้ว', 'success');
   }
 
   // ── รวม log จริง + คิวรอส่ง → สถานะล่าสุดต่อรหัส ─────────────────────────────
@@ -782,6 +848,7 @@ const App = (() => {
     rebuildIndex();
     renderFilterOptions();
     renderLocList();
+    renderAreaList();
     renderRoundBanner();
     renderList();
     renderSessions();
@@ -996,6 +1063,10 @@ const App = (() => {
       invCol = bestCol;
       swapped = true;
     }
+    // พื้นที่จัดเก็บ: รองรับทั้งคอลัมน์ Location ที่เติมเอง และ Port ED - Text จาก SAP
+    const locCol = col(['LOCATION', 'PORT ED - TEXT', 'PORT ED- TEXT', 'พื้นที่', 'พื้นที่จัดเก็บ',
+      'สถานที่', 'สถานที่เก็บ', 'จุดเก็บ', 'STORAGE LOCATION']);
+    const locCodeCol = col(['PORT ED', 'LOCATION CODE', 'รหัสพื้นที่']);
     const cols = isRental
       ? { material: col(['MATERIAL']), desc: col(['DESCRIPTION']),
           plant: col(['PLAN', 'PLANT']), sloc: col(['SLOC']) }
@@ -1022,7 +1093,9 @@ const App = (() => {
         inventoryNumber: inv,
         assetType: isRental ? 'RENTAL' : 'FIXED',
         categoryCode: inv.split('-')[1] || '',
-        description: cell(row, cols.desc)
+        description: cell(row, cols.desc),
+        location: cell(row, locCol),
+        locationCode: cell(row, locCodeCol)
       };
       if (isRental) {
         item.materialCode = cell(row, cols.material);
@@ -1237,8 +1310,57 @@ const App = (() => {
     state.ui.staff = staffSel.value;
     syncCombo('staffFilter');
 
+    // พื้นที่จัดเก็บ — ใช้จำกัดขอบเขตการตรวจของรอบใหญ่ (คลังกลาง)
+    const areaSel = el('areaFilter');
+    const curArea = state.ui.area;
+    const ac = {};
+    let noArea = 0;
+    list.forEach((a) => {
+      const v = (a.location || '').trim();
+      if (!v) { noArea++; return; }
+      ac[v] = (ac[v] || 0) + 1;
+    });
+    const areas = Object.keys(ac).sort((a, b) => a.localeCompare(b, 'th'));
+    let h3 = '<option value="">พื้นที่: ทั้งหมด (' + list.length + ')</option>';
+    if (noArea) h3 += '<option value="__NONE__">(ไม่ระบุพื้นที่) — ' + noArea + '</option>';
+    areas.forEach((v) => {
+      h3 += '<option value="' + esc(v) + '">' + esc(v) + ' (' + ac[v] + ')</option>';
+    });
+    areaSel.innerHTML = h3;
+    areaSel.value = curArea && (curArea === '__NONE__' || ac[curArea]) ? curArea : '';
+    state.ui.area = areaSel.value;
+    syncCombo('areaFilter');
+
     el('tabCountF').textContent = state.master.filter((a) => a.assetType === 'FIXED').length;
     el('tabCountR').textContent = state.master.filter((a) => a.assetType === 'RENTAL').length;
+  }
+  /** รายชื่อพื้นที่ที่รู้จักในรอบนี้ เรียง "ที่ใช้ล่าสุด" ขึ้นก่อนเสมอ */
+  function knownAreas() {
+    const out = [];
+    const seen = {};
+    const push = (v) => {
+      const s = String(v || '').trim();
+      if (s && !seen[s]) { seen[s] = 1; out.push(s); }
+    };
+    (cacheGet('avRecentAreas') || []).forEach(push);      // ที่เพิ่งใช้ไป
+    const counts = {};
+    state.master.forEach((a) => {
+      const v = (a.location || '').trim();
+      if (v) counts[v] = (counts[v] || 0) + 1;
+    });
+    Object.keys(counts).sort((a, b) => counts[b] - counts[a]).forEach(push);
+    return out;
+  }
+  function rememberArea(v) {
+    const s = String(v || '').trim();
+    if (!s) return;
+    const prev = (cacheGet('avRecentAreas') || []).filter((x) => x !== s);
+    prev.unshift(s);
+    cacheSet('avRecentAreas', prev.slice(0, 12));
+  }
+  function renderAreaList() {
+    el('areaList').innerHTML = knownAreas().slice(0, 40)
+      .map((v) => '<option value="' + esc(v) + '"></option>').join('');
   }
   function renderLocList() {
     const seen = {};
@@ -1258,6 +1380,11 @@ const App = (() => {
       list = ui.staff === '__NONE__'
         ? list.filter((a) => !(a.staffText || '').trim())
         : list.filter((a) => (a.staffText || '').trim() === ui.staff);
+    }
+    if (ui.area) {
+      list = ui.area === '__NONE__'
+        ? list.filter((a) => !(a.location || '').trim())
+        : list.filter((a) => (a.location || '').trim() === ui.area);
     }
     if (ui.q) {
       const words = ui.q.toUpperCase().split(/\s+/).filter(Boolean);
@@ -1312,6 +1439,10 @@ const App = (() => {
       (c.latest ? '<small class="row-meta">' + esc(c.latest.inspector || '') + ' · ' +
         esc(thaiDT(c.latest.verifiedAt)) + (c.latest.pending ? ' · รอส่ง' : '') + '</small>' : '') + '</td>'
   };
+  const COL_LOC = {
+    key: 'location', label: 'พื้นที่จัดเก็บ', cls: 'c-md',
+    get: (c) => (c.asset.location || '').trim()
+  };
   const COLS_TAIL = [
     { key: 'moveSite', label: 'ส่งไป SITE', cls: 'c-lg', group: 'move',
       get: (c) => (c.moved ? c.moved.moveToSite : '') },
@@ -1331,14 +1462,16 @@ const App = (() => {
       COL_INV, COL_DESC,
       { key: 'serial', label: 'Serial Number', cls: 'c-xl', get: (c) => c.asset.serialNumber },
       { key: 'staff', label: 'Staff – Text', cls: 'c-md', get: (c) => (c.asset.staffText || '').trim() },
-      { key: 'site', label: 'Current Site', cls: 'c-xl', get: (c) => c.asset.currentSite }
+      { key: 'site', label: 'Current Site', cls: 'c-xl', get: (c) => c.asset.currentSite },
+      COL_LOC
     ].concat(COLS_TAIL),
     RENTAL: [
       { key: 'no', label: 'NO.', cls: 'c-lg num', get: (c) => String(c.index + 1) },
       { key: 'material', label: 'Material', cls: 'c-md mono', get: (c) => c.asset.materialCode },
       COL_DESC, COL_INV,
       { key: 'plant', label: 'Plan', cls: 'c-xl', get: (c) => c.asset.plant },
-      { key: 'sloc', label: 'Sloc', cls: 'c-xl', get: (c) => c.asset.sloc }
+      { key: 'sloc', label: 'Sloc', cls: 'c-xl', get: (c) => c.asset.sloc },
+      COL_LOC
     ].concat(COLS_TAIL)
   };
   /** คอลัมน์ที่จะแสดงจริงของประเภทที่กำลังดู */
@@ -1520,6 +1653,47 @@ const App = (() => {
   function setSearch(v) { state.ui.q = v.trim(); renderList(); }
   function setCat(v) { state.ui.cat = v; renderList(); }
   function setStaff(v) { state.ui.staff = v; renderList(); }
+  function setArea(v) { state.ui.area = v; renderList(); }
+  /**
+   * เขียนพื้นที่จัดเก็บลงทะเบียนของรอบนี้ (ผู้ตรวจเติม/แก้เองได้หน้างาน)
+   * ต้องออนไลน์ เพราะเป็นการแก้ "ทะเบียน" ไม่ใช่ผลตรวจ (ผลตรวจยังทำออฟไลน์ได้เหมือนเดิม)
+   */
+  async function applyAreaTo(invs, area) {
+    const s = state.activeSession;
+    if (!s) return;
+    if (!navigator.onLine) return toast('แก้พื้นที่ต้องออนไลน์ — ผลตรวจยังบันทึกออฟไลน์ได้ตามปกติ', 'warn');
+    try {
+      busy('กำลังบันทึกพื้นที่...');
+      const res = await AssetStore.setAssetLocation(s.sessionId, invs, area);
+      state.master.forEach((a) => {
+        if (invs.indexOf(a.inventoryNumber) >= 0) a.location = area;
+      });
+      cacheSet('avMaster_' + s.sessionId, state.master);
+      rememberArea(area);
+      afterDataChange();
+      toast(area
+        ? 'กำหนดพื้นที่ "' + area + '" ให้ ' + res.updated + ' รายการแล้ว'
+        : 'ล้างพื้นที่ของ ' + res.updated + ' รายการแล้ว', 'success');
+    } catch (e) {
+      toast('บันทึกพื้นที่ไม่สำเร็จ: ' + e.message, 'error');
+    } finally {
+      busyHide();
+    }
+  }
+  /** กำหนดพื้นที่ให้ทุกรายการที่ติ๊กเลือกไว้ในตาราง */
+  async function setSelectedArea() {
+    if (!state.canWrite) return;
+    const invs = Array.from(state.selection);
+    if (!invs.length) return toast('ยังไม่ได้เลือกรายการ', 'warn');
+    const known = knownAreas();
+    const suggest = known[0] || '';
+    const area = window.prompt('กำหนดพื้นที่จัดเก็บให้ ' + invs.length + ' รายการที่เลือก\n' +
+      (known.length ? 'พื้นที่ที่มีอยู่: ' + known.slice(0, 8).join(' / ') + '\n' : '') +
+      '(เว้นว่างแล้วกด OK = ล้างพื้นที่)', suggest);
+    if (area === null) return;
+    await applyAreaTo(invs, area.trim());
+    clearSelection();
+  }
   function setSort(v) { state.ui.sort = v; renderList(); }
   function setStatus(v) {
     state.ui.status = v;
@@ -1811,6 +1985,14 @@ const App = (() => {
     }
     renderHistory(asset.inventoryNumber);
     resetRecForm();
+    // พื้นที่จัดเก็บ: มีในทะเบียนใช้ของเดิม · ยังว่างให้เติมพื้นที่ที่เพิ่งใช้ล่าสุดไว้ให้เลย
+    const areaNow = (asset.location || '').trim();
+    el('recArea').value = areaNow || (knownAreas()[0] || '');
+    el('recAreaRow').classList.remove('hidden');
+    el('recAreaRow').querySelector('span').textContent = areaNow
+      ? 'พื้นที่จัดเก็บในทะเบียน (แก้ได้ถ้าไม่ตรง)'
+      : 'พื้นที่จัดเก็บในทะเบียน — ยังไม่เคยระบุ (บันทึกแล้วจะเติมให้ทะเบียน)';
+    renderAreaList();
     el('unlistedFields').classList.add('hidden');
     el('recForm').classList.toggle('hidden', !state.canWrite);
     el('recordModal').classList.remove('hidden');
@@ -1832,6 +2014,7 @@ const App = (() => {
     el('recWarn').classList.add('hidden');
     el('recHistory').innerHTML = '';
     resetRecForm();
+    el('recAreaRow').classList.add('hidden');    // นอกทะเบียนยังไม่มีแถวในทะเบียนให้เขียนพื้นที่
     el('unlistedFields').classList.remove('hidden');
     el('unlInv').value = code || '';
     el('unlDesc').value = '';
@@ -1847,6 +2030,7 @@ const App = (() => {
     el('moveDoc').value = '';
     el('moveDate').value = todayISO();
     el('recLocation').value = cacheGet('avLastLocation') || '';
+    el('recArea').value = '';
     el('recNote').value = '';
     el('photoStrip').innerHTML = '';
     el('gpsLine').innerHTML = icon('pin') + ' กำลังหาพิกัด GPS...';
@@ -1967,6 +2151,9 @@ const App = (() => {
     if (pieceNo === null) return;
     const location = el('recLocation').value.trim();
     if (location) cacheSet('avLastLocation', location);
+    // พื้นที่จัดเก็บในทะเบียน — เขียนกลับเฉพาะเมื่อผู้ตรวจแก้/เติมค่าใหม่
+    const areaNew = el('recArea').value.trim();
+    const areaOld = rec.asset ? (rec.asset.location || '').trim() : '';
     try {
       await queueRecord({
         inventoryNumber: inv, assetType: assetType, resultKey: rec.resultKey, pieceNo: pieceNo,
@@ -1981,6 +2168,10 @@ const App = (() => {
       });
     } catch (e) {
       return toast('บันทึกลงเครื่องไม่ได้: ' + e.message, 'error');
+    }
+    if (rec.asset && areaNew !== areaOld) {
+      rememberArea(areaNew);
+      applyAreaTo([inv], areaNew);       // ไม่ต้องรอ — ผลตรวจบันทึกไปแล้ว
     }
     afterDataChange();
     const fromScanner = rec.fromScanner;
@@ -2757,6 +2948,11 @@ const App = (() => {
   // ── โหมดนับจำนวน (ของที่ไม่ทราบ RT code) ───────────────────────────────────
   // เก็บแยกจากผลตรวจรายชิ้นโดยสิ้นเชิง — ไม่แตะสถานะของรหัสใดๆ
   // ใช้เทียบ "ทะเบียนมีกี่ชิ้น ↔ นับเจอจริงกี่ชิ้น" ในหมวดนั้น
+  /** ชื่อหมวดที่แสดงผล — เติม RT- ให้เฉพาะรหัสหมวดจริง ไม่เติมให้หมวดที่พิมพ์เอง */
+  function catLabel(cat) {
+    const c = String(cat || '');
+    return /^[A-Z0-9]{2,6}$/.test(c) ? 'RT-' + c : c;
+  }
   /** สรุปรายหมวด: จำนวนในทะเบียน · ผลตรวจรายชิ้น · ยอดนับสะสม · ส่วนต่าง */
   function countSummary(type) {
     const t = type || state.ui.type;
@@ -2793,10 +2989,19 @@ const App = (() => {
     if (!cats.length) return toast('ยังไม่มีทะเบียนของประเภทนี้', 'warn');
     if (!state.count.cat || cats.indexOf(state.count.cat) < 0) state.count.cat = cats[0];
     el('countSub').textContent = state.ui.type === 'RENTAL' ? 'ทรัพย์สินของเช่า' : 'ทรัพย์สิน Fixed Assets';
+    // หมวดที่เคยนับไว้แต่ไม่มีในทะเบียน (พิมพ์เอง) ให้ขึ้นในลิสต์ด้วย
+    const extraCats = Array.from(new Set(allCounts()
+      .filter((c) => c.assetType === state.ui.type && cats.indexOf(c.categoryCode) < 0)
+      .map((c) => c.categoryCode))).sort();
     el('countCat').innerHTML = cats.map((c) =>
-      '<option value="' + esc(c) + '">RT-' + esc(c) + ' — ทะเบียน ' + counts[c] + ' ชิ้น</option>').join('');
+      '<option value="' + esc(c) + '">RT-' + esc(c) + ' — ทะเบียน ' + counts[c] + ' ชิ้น</option>').join('') +
+      extraCats.map((c) =>
+        '<option value="' + esc(c) + '">' + esc(c) + ' — นอกทะเบียน</option>').join('') +
+      '<option value="__CUSTOM__">+ หมวดอื่น (พิมพ์เอง)</option>';
     el('countCat').value = state.count.cat;
     syncCombo('countCat');
+    el('countCustomRow').classList.add('hidden');
+    el('countCustom').value = '';
     el('countLocation').value = cacheGet('avLastLocation') || '';
     el('countNote').value = '';
     el('countN').value = '1';
@@ -2809,7 +3014,19 @@ const App = (() => {
     updateSyncChip();
   }
   function setCountCat(v) {
-    state.count.cat = v;
+    const custom = v === '__CUSTOM__';
+    el('countCustomRow').classList.toggle('hidden', !custom);
+    if (custom) {
+      state.count.cat = el('countCustom').value.trim().toUpperCase();
+      setTimeout(() => el('countCustom').focus(), 50);
+    } else {
+      state.count.cat = v;
+    }
+    updateCountView();
+  }
+  /** หมวดที่ไม่มีในทะเบียน — พิมพ์เองได้ (ของที่ไม่ทราบทั้งรหัสและหมวด) */
+  function setCountCustom(v) {
+    state.count.cat = String(v || '').trim().toUpperCase();
     updateCountView();
   }
   function adjustCount(delta) {
@@ -2824,6 +3041,10 @@ const App = (() => {
       { total: 0, counted: 0, found: 0, notfound: 0, pending: 0, moved: 0 };
     const diff = g.total - g.counted;
     el('countCompare').innerHTML =
+      (cat && g.total === 0
+        ? '<p class="warn-inline">หมวด "' + esc(cat) + '" ไม่มีในทะเบียนรอบนี้ — ' +
+          'ยอดที่นับจะถูกเก็บเป็นของนอกทะเบียนไว้เทียบต่างหาก</p>'
+        : '') +
       '<div class="cmp-grid">' +
         '<div class="cmp-cell"><b>' + g.total + '</b><small>ทะเบียนหมวดนี้</small></div>' +
         '<div class="cmp-cell ok"><b>' + g.counted + '</b><small>นับเจอสะสม</small></div>' +
@@ -2856,9 +3077,11 @@ const App = (() => {
   async function saveCountEntry() {
     const s = state.activeSession;
     if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
-    const cat = el('countCat').value;
+    // ช่องพิมพ์เองเปิดอยู่ = ใช้ค่าที่พิมพ์เสมอ (กันกรณี select ยังค้างค่าเดิม)
+    const custom = !el('countCustomRow').classList.contains('hidden');
+    const cat = custom ? el('countCustom').value.trim().toUpperCase() : el('countCat').value;
     const n = parseInt(el('countN').value, 10);
-    if (!cat) return toast('เลือกหมวดก่อน', 'warn');
+    if (!cat || cat === '__CUSTOM__') return toast('เลือกหมวด หรือพิมพ์ชื่อหมวดเองก่อน', 'warn');
     if (!(n > 0)) return toast('กรอกจำนวนที่นับได้ (มากกว่า 0)', 'warn');
     const location = el('countLocation').value.trim();
     if (location) cacheSet('avLastLocation', location);
@@ -2877,9 +3100,10 @@ const App = (() => {
     beep();
     el('countN').value = '1';
     el('countNote').value = '';
+    state.count.cat = cat;
     afterDataChange();
     updateCountView();
-    toast('บันทึกยอดนับ ' + n + ' ชิ้น หมวด RT-' + cat, 'success');
+    toast('บันทึกยอดนับ ' + n + ' ชิ้น หมวด ' + catLabel(cat), 'success');
     flushQueue();
   }
   async function deleteCountEntry(id) {
@@ -2887,7 +3111,7 @@ const App = (() => {
     const row = all.find((c) => String(c.countId) === String(id));
     if (!row) return;
     if (!canEditCount(row)) return toast('ลบได้เฉพาะยอดที่ตัวเองบันทึก (หรือให้ผู้ดูแลลบให้)', 'warn');
-    if (!window.confirm('ลบยอดนับ ' + row.counted + ' ชิ้น ของหมวด RT-' + row.categoryCode + '?')) return;
+    if (!window.confirm('ลบยอดนับ ' + row.counted + ' ชิ้น ของหมวด ' + catLabel(row.categoryCode) + '?')) return;
     try {
       if (String(id).indexOf('pending-') === 0) {
         const cid = String(id).slice('pending-'.length);
@@ -3182,6 +3406,10 @@ const App = (() => {
           groupBars(rentalList, (a) => 'RT-' + (a.categoryCode || '?')) + '</div>' +
         '<div class="dash-card wide"><h4>ตามผู้รับผิดชอบ (Fixed Assets)</h4>' +
           groupBars(fixedList, (a) => (a.staffText || '').trim()) + '</div>' +
+        (state.master.some((a) => (a.location || '').trim())
+          ? '<div class="dash-card wide"><h4>' + icon('pin') + ' ตามพื้นที่จัดเก็บ</h4>' +
+            groupBars(state.master, (a) => (a.location || '').trim() || '(ไม่ระบุพื้นที่)') + '</div>'
+          : '') +
       '</div>' +
       '<div class="dash-card wide"><h4>รายการตรวจล่าสุด</h4>' +
         (recent ? '<div class="table-wrap flat"><table class="asset-table mini"><thead><tr>' +
@@ -3205,7 +3433,7 @@ const App = (() => {
     ['FIXED', 'RENTAL'].forEach((t) => {
       countSummary(t).filter((g) => g.entries > 0).forEach((g) => {
         const diff = g.total - g.counted;
-        rows.push('<tr><td class="mono nowrap">RT-' + esc(g.cat) + '</td>' +
+        rows.push('<tr><td class="mono nowrap">' + esc(catLabel(g.cat)) + '</td>' +
           '<td class="c-md">' + (t === 'RENTAL' ? 'ของเช่า' : 'Fixed') + '</td>' +
           '<td class="num">' + g.total + '</td>' +
           '<td class="num"><b>' + g.counted + '</b></td>' +
@@ -3248,7 +3476,7 @@ const App = (() => {
       how: l ? l.method : ''
     };
   }
-  const EXTRA_HEAD = ['จำนวนที่บันทึก (ชิ้น)', 'ผู้บันทึก', 'เวลาที่บันทึก', 'ตำแหน่งที่ตรวจ', 'วิธี'];
+  const EXTRA_HEAD = ['พื้นที่จัดเก็บ', 'จำนวนที่บันทึก (ชิ้น)', 'ผู้บันทึก', 'เวลาที่บันทึก', 'ตำแหน่งที่ตรวจ', 'วิธี'];
   const THIN = { style: 'thin', color: { argb: 'FFBFBFBF' } };
   const BORDER = { top: THIN, left: THIN, bottom: THIN, right: THIN };
 
@@ -3445,12 +3673,12 @@ const App = (() => {
         return [i + 1, a.assetClass || '', a.assetNumber || '', a.subNumber || '',
           a.inventoryNumber, a.description || '', a.serialNumber || '', a.staffText || '',
           a.currentSite || '', y.yes, y.no, y.site, y.doc, y.date, y.note,
-          y.pieces, y.by, y.at, y.where, y.how];
+          a.location || '', y.pieces, y.by, y.at, y.where, y.how];
       });
       buildFormSheet(wb, s, {
         sheetName: 'ทรัพย์สิน Fixed Assets',
         title: 'รายงานการตรวจสอบทรัพย์สิน Fixed Assets',
-        widths: [5, 10, 13, 8, 19, 34, 15, 20, 15, 6, 6, 12, 13, 13, 30, 9, 20, 18, 18, 9],
+        widths: [5, 10, 13, 8, 19, 34, 15, 20, 15, 6, 6, 12, 13, 13, 30, 16, 9, 20, 18, 18, 9],
         descCol: 5, yesCol: 9, noCol: 10, pieceCol: 15,
         rows: fixedRows,
         head: [
@@ -3481,12 +3709,12 @@ const App = (() => {
         const y = reportCells(a);
         return [i + 1, a.materialCode || '', a.description || '', a.inventoryNumber,
           a.plant || '', a.sloc || '', y.yes, y.no, y.site, y.doc, y.date, y.note,
-          y.pieces, y.by, y.at, y.where, y.how];
+          a.location || '', y.pieces, y.by, y.at, y.where, y.how];
       });
       buildFormSheet(wb, s, {
         sheetName: 'ทรัพย์สินของเช่า',
         title: 'รายงานการตรวจสอบทรัพย์สิน ของเช่า',
-        widths: [5, 14, 34, 19, 8, 8, 6, 6, 12, 13, 13, 30, 9, 20, 18, 18, 9],
+        widths: [5, 14, 34, 19, 8, 8, 6, 6, 12, 13, 13, 30, 16, 9, 20, 18, 18, 9],
         descCol: 2, yesCol: 6, noCol: 7, pieceCol: 12,
         rows: rentalRows,
         head: [
@@ -3557,7 +3785,7 @@ const App = (() => {
         let cr = 2;
         ['FIXED', 'RENTAL'].forEach((t) => {
           countSummary(t).filter((g) => g.entries > 0).forEach((g) => {
-            [['RT-' + g.cat, t === 'RENTAL' ? 'ของเช่า' : 'Fixed', g.total, g.counted,
+            [[catLabel(g.cat), t === 'RENTAL' ? 'ของเช่า' : 'Fixed', g.total, g.counted,
               g.total - g.counted, g.found, g.notfound, g.moved, g.pending, g.entries]][0]
               .forEach((v, c) => {
                 const cell = cnt.getCell(cr, c + 1);
@@ -3577,7 +3805,7 @@ const App = (() => {
         dHead.forEach((h, i) => { styleHeadCell(cnt.getCell(cr, i + 1)).value = h; });
         countsAll.slice().sort((a, b) => String(a.countedAt).localeCompare(String(b.countedAt)))
           .forEach((c, i) => {
-            [thaiDT(c.countedAt), 'RT-' + c.categoryCode,
+            [thaiDT(c.countedAt), catLabel(c.categoryCode),
               c.assetType === 'RENTAL' ? 'ของเช่า' : 'Fixed', Number(c.counted) || 0,
               c.locationText || '', c.inspector || '', c.note || ''
             ].forEach((v, col) => {
@@ -3908,7 +4136,8 @@ const App = (() => {
     go, refreshAll, flushQueueNow,
     setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession,
     readMasterFile, confirmImport, cancelImport,
-    setType, setView, setSearch, setCat, setStaff, setSort, setStatus,
+    setType, setView, setSearch, setCat, setStaff, setArea, setSort, setStatus, setSelectedArea,
+    openQueuePanel, closeQueuePanel, retryQueue, dropQueueItem, dropAllQueue, setCountCustom,
     toggleColPicker, closeColPicker, toggleCol, pickAllCols, resetCols,
     openCountSheet, closeCount, setCountCat, adjustCount, saveCountEntry, deleteCountEntry,
     setActWho, setActResult, setActRange, setActSort, setActSearch,

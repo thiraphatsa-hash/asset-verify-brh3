@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.4.0">
+  <link rel="stylesheet" href="styles.css?v=2.5.0">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -166,6 +166,7 @@
           <div class="filter-row">
             <select id="catFilter" class="filter-select" onchange="App.setCat(this.value)"><option value="">ทุกหมวด</option></select>
             <select id="staffFilter" class="filter-select" onchange="App.setStaff(this.value)"><option value="">ผู้รับผิดชอบ: ทั้งหมด</option></select>
+            <select id="areaFilter" class="filter-select" onchange="App.setArea(this.value)"><option value="">พื้นที่: ทั้งหมด</option></select>
             <select id="sortSel" class="filter-select" onchange="App.setSort(this.value)">
               <option value="inv">เรียง: รหัสทรัพย์สิน</option>
               <option value="time">เรียง: ตรวจล่าสุดก่อน</option>
@@ -299,6 +300,7 @@
       <div class="bulk-bar-actions">
         <button class="seg seg-ok" type="button" onclick="App.applySelection('FOUND_NORMAL')"><span data-icon="check"></span> พบ</button>
         <button class="seg seg-no" type="button" onclick="App.applySelection('NOT_FOUND')"><span data-icon="close"></span> ไม่พบ</button>
+        <button class="seg" type="button" onclick="App.setSelectedArea()"><span data-icon="pin"></span> กำหนดพื้นที่</button>
         <button id="bulkDelete" class="seg seg-del hidden" type="button" onclick="App.deleteSelectedHistory()"><span data-icon="trash"></span> ลบประวัติ</button>
       </div>
     </div>
@@ -393,6 +395,9 @@
             </div>
           </div>
 
+          <label id="recAreaRow" class="field"><span>พื้นที่จัดเก็บในทะเบียน (แก้ได้ถ้าไม่ตรง)</span>
+            <input id="recArea" type="text" list="areaList" placeholder="เช่น โกดัง 1 / Office / สโตร์"></label>
+
           <label class="field"><span>ตำแหน่งที่ตรวจ (อาคาร/ชั้น/ห้อง/โซน)</span>
             <input id="recLocation" type="text" list="locList" placeholder="เช่น อาคาร A ชั้น 2 ห้องประชุม"></label>
 
@@ -470,6 +475,27 @@
     </div>
   </div>
 
+  <!-- ── Modal: รายการค้างส่ง ──────────────────────────────────────────────── -->
+  <div id="queueModal" class="modal hidden" onclick="if(event.target===this)App.closeQueuePanel()">
+    <div class="sheet dup-sheet">
+      <div class="sheet-head">
+        <div><h3><span data-icon="clock"></span> รายการค้างส่ง</h3><p id="queueSub"></p></div>
+        <button class="close-button" type="button" onclick="App.closeQueuePanel()"><span data-icon="close"></span></button>
+      </div>
+      <div class="sheet-body">
+        <div id="queueList" class="queue-list"></div>
+        <div class="q-actions">
+          <button id="queueRetry" class="primary-button" type="button" onclick="App.retryQueue()">
+            <span data-icon="refresh"></span> ลองส่งอีกครั้ง</button>
+          <button id="queueDropAll" class="outline-button" type="button" onclick="App.dropAllQueue()">
+            <span data-icon="trash"></span> ทิ้งทั้งหมด</button>
+        </div>
+        <p class="hint">รายการที่ส่งไม่ผ่านจะขึ้นสาเหตุไว้ให้ · ถ้าสาเหตุคือ "ยังไม่ได้ติดตั้ง..."
+          ให้รันไฟล์ SQL ที่ระบุใน Supabase ก่อนแล้วกดลองส่งอีกครั้ง</p>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Modal: นับจำนวน (ของที่ไม่ทราบ RT code) ───────────────────────────── -->
   <div id="countModal" class="modal hidden" onclick="if(event.target===this)App.closeCount()">
     <div class="sheet">
@@ -483,6 +509,9 @@
           และรวมยอดสะสมให้เองถ้านับหลายจุด</p>
         <label class="field"><span>หมวดทรัพย์สิน</span>
           <select id="countCat" onchange="App.setCountCat(this.value)"></select></label>
+        <label id="countCustomRow" class="field hidden"><span>พิมพ์ชื่อหมวดเอง (ไม่มีในทะเบียน)</span>
+          <input id="countCustom" type="text" autocapitalize="characters" autocomplete="off"
+            placeholder="เช่น CHXX หรือ ของไม่มีป้าย" oninput="App.setCountCustom(this.value)"></label>
         <div class="field">
           <span>จำนวนที่นับได้ (ชิ้น)</span>
           <div class="count-entry">
@@ -562,13 +591,14 @@
   </div>
 
   <datalist id="locList"></datalist>
+  <datalist id="areaList"></datalist>
   <div id="toastContainer" class="toast-container"></div>
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.4.0" defer></script>
-  <script src="config.js?v=2.4.0"></script>
-  <script src="src/assetStore.js?v=2.4.0"></script>
-  <script src="app.js?v=2.4.0"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.5.0" defer></script>
+  <script src="config.js?v=2.5.0"></script>
+  <script src="src/assetStore.js?v=2.5.0"></script>
+  <script src="app.js?v=2.5.0"></script>
 </body>
 </html>
