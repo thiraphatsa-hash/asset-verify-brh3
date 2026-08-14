@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.5.0">
+  <link rel="stylesheet" href="styles.css?v=2.5.1">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -296,7 +296,7 @@
     <div id="bulkBar" class="bulk-bar hidden">
       <div class="bulk-bar-info"><b id="bulkBarCount">0</b> รายการที่เลือก
         <button class="link-button" type="button" onclick="App.clearSelection()">ล้าง</button></div>
-      <input id="bulkBarLocation" type="text" list="locList" placeholder="ตำแหน่งที่ตรวจ (ไม่บังคับ)">
+      <input id="bulkBarLocation" type="text" list="areaList" placeholder="พื้นที่ / ตำแหน่งที่ตรวจ (ไม่บังคับ)">
       <div class="bulk-bar-actions">
         <button class="seg seg-ok" type="button" onclick="App.applySelection('FOUND_NORMAL')"><span data-icon="check"></span> พบ</button>
         <button class="seg seg-no" type="button" onclick="App.applySelection('NOT_FOUND')"><span data-icon="close"></span> ไม่พบ</button>
@@ -395,11 +395,10 @@
             </div>
           </div>
 
-          <label id="recAreaRow" class="field"><span>พื้นที่จัดเก็บในทะเบียน (แก้ได้ถ้าไม่ตรง)</span>
-            <input id="recArea" type="text" list="areaList" placeholder="เช่น โกดัง 1 / Office / สโตร์"></label>
-
-          <label class="field"><span>ตำแหน่งที่ตรวจ (อาคาร/ชั้น/ห้อง/โซน)</span>
-            <input id="recLocation" type="text" list="locList" placeholder="เช่น อาคาร A ชั้น 2 ห้องประชุม"></label>
+          <label class="field"><span id="recLocLabel">พื้นที่ / ตำแหน่งที่ตรวจ</span>
+            <input id="recLocation" type="text" list="areaList" autocomplete="off"
+              placeholder="เช่น โกดัง 1 / Office / อาคาร A ชั้น 2"></label>
+          <p id="recLocHint" class="hint"></p>
 
           <label class="field"><span>หมายเหตุ</span>
             <textarea id="recNote" rows="2" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"></textarea></label>
@@ -468,7 +467,7 @@
           <button type="button" class="seg seg-no" data-result="NOT_FOUND" onclick="App.setBulkResult('NOT_FOUND')"><span data-icon="close"></span> ไม่พบ</button>
         </div>
         <label class="field"><span>ตำแหน่งที่ตรวจ</span>
-          <input id="bulkLocation" type="text" list="locList" placeholder="เช่น คลังเก็บของ โซน B"></label>
+          <input id="bulkLocation" type="text" list="areaList" placeholder="เช่น โกดัง 1 / คลังเก็บของ โซน B"></label>
         <div id="bulkCounter" class="bulk-counter"></div>
         <div id="bulkLast" class="bulk-last"></div>
       </div>
@@ -524,7 +523,7 @@
           </div>
         </div>
         <label class="field"><span>จุดที่นับ</span>
-          <input id="countLocation" type="text" list="locList" placeholder="เช่น ชั้น 3 โซน B"></label>
+          <input id="countLocation" type="text" list="areaList" placeholder="เช่น โกดัง 1 / ชั้น 3 โซน B"></label>
         <label class="field"><span>หมายเหตุ (ไม่บังคับ)</span>
           <input id="countNote" type="text" placeholder="เช่น กองรวมยังไม่ติดสติกเกอร์"></label>
         <button class="primary-button full-width big-save" type="button" onclick="App.saveCountEntry()">
@@ -596,9 +595,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.5.0" defer></script>
-  <script src="config.js?v=2.5.0"></script>
-  <script src="src/assetStore.js?v=2.5.0"></script>
-  <script src="app.js?v=2.5.0"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.5.1" defer></script>
+  <script src="config.js?v=2.5.1"></script>
+  <script src="src/assetStore.js?v=2.5.1"></script>
+  <script src="app.js?v=2.5.1"></script>
 </body>
 </html>

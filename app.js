@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.5.0';
+  const APP_VERSION = 'v2.5.1';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -1351,6 +1351,15 @@ const App = (() => {
     Object.keys(counts).sort((a, b) => counts[b] - counts[a]).forEach(push);
     return out;
   }
+  /** พื้นที่ล่าสุดที่ "คนที่ล็อกอินอยู่" เพิ่งบันทึกไว้ — ใช้เติมให้รายการถัดไปอัตโนมัติ */
+  function lastAreaOfMine() {
+    const me = inspectorName();
+    const mine = allLogs()
+      .filter((l) => (l.inspector || '') === me && (l.locationText || '').trim())
+      .sort((a, b) => String(b.verifiedAt).localeCompare(String(a.verifiedAt)));
+    if (mine.length) return mine[0].locationText.trim();
+    return cacheGet('avLastLocation') || '';
+  }
   function rememberArea(v) {
     const s = String(v || '').trim();
     if (!s) return;
@@ -1358,8 +1367,16 @@ const App = (() => {
     prev.unshift(s);
     cacheSet('avRecentAreas', prev.slice(0, 12));
   }
+  /** ตัวเลือกพื้นที่ = พื้นที่ที่เพิ่งใช้ + พื้นที่ในทะเบียน + ตำแหน่งที่เคยบันทึกไว้ */
   function renderAreaList() {
-    el('areaList').innerHTML = knownAreas().slice(0, 40)
+    const seen = {};
+    const opts = [];
+    knownAreas().forEach((v) => { if (!seen[v]) { seen[v] = 1; opts.push(v); } });
+    allLogs().forEach((l) => {
+      const v = (l.locationText || '').trim();
+      if (v && !seen[v]) { seen[v] = 1; opts.push(v); }
+    });
+    el('areaList').innerHTML = opts.slice(0, 60)
       .map((v) => '<option value="' + esc(v) + '"></option>').join('');
   }
   function renderLocList() {
@@ -1658,12 +1675,24 @@ const App = (() => {
    * เขียนพื้นที่จัดเก็บลงทะเบียนของรอบนี้ (ผู้ตรวจเติม/แก้เองได้หน้างาน)
    * ต้องออนไลน์ เพราะเป็นการแก้ "ทะเบียน" ไม่ใช่ผลตรวจ (ผลตรวจยังทำออฟไลน์ได้เหมือนเดิม)
    */
-  async function applyAreaTo(invs, area) {
+  /** เติมพื้นที่ให้เฉพาะรายการที่ทะเบียน "ยังไม่ได้ระบุ" (ไม่ไปทับของที่ระบุไว้แล้ว) */
+  function fillAreaIfEmpty(invs, area) {
+    if (!area || !navigator.onLine) return;
+    const blanks = invs.filter((inv) => {
+      const a = state.master.find((x) => x.inventoryNumber === inv);
+      return a && !(a.location || '').trim();
+    });
+    if (blanks.length) applyAreaTo(blanks, area, true);
+  }
+  async function applyAreaTo(invs, area, quiet) {
     const s = state.activeSession;
     if (!s) return;
-    if (!navigator.onLine) return toast('แก้พื้นที่ต้องออนไลน์ — ผลตรวจยังบันทึกออฟไลน์ได้ตามปกติ', 'warn');
+    if (!navigator.onLine) {
+      if (!quiet) toast('แก้พื้นที่ต้องออนไลน์ — ผลตรวจยังบันทึกออฟไลน์ได้ตามปกติ', 'warn');
+      return;
+    }
     try {
-      busy('กำลังบันทึกพื้นที่...');
+      if (!quiet) busy('กำลังบันทึกพื้นที่...');
       const res = await AssetStore.setAssetLocation(s.sessionId, invs, area);
       state.master.forEach((a) => {
         if (invs.indexOf(a.inventoryNumber) >= 0) a.location = area;
@@ -1776,7 +1805,7 @@ const App = (() => {
       dupMode = choice;
     }
     const location = el('bulkBarLocation').value.trim();
-    if (location) cacheSet('avLastLocation', location);
+    if (location) { cacheSet('avLastLocation', location); rememberArea(location); }
     busy('กำลังบันทึก ' + invs.length + ' รายการ...');
     let n = 0;
     for (let i = 0; i < invs.length; i++) {
@@ -1790,6 +1819,7 @@ const App = (() => {
       });
       n++;
     }
+    fillAreaIfEmpty(invs, location);      // เติมพื้นที่ให้เฉพาะรายการที่ทะเบียนยังว่าง
     state.selection.clear();
     busyHide();
     afterDataChange();
@@ -1985,13 +2015,19 @@ const App = (() => {
     }
     renderHistory(asset.inventoryNumber);
     resetRecForm();
-    // พื้นที่จัดเก็บ: มีในทะเบียนใช้ของเดิม · ยังว่างให้เติมพื้นที่ที่เพิ่งใช้ล่าสุดไว้ให้เลย
+    // ช่องเดียวจบ: พื้นที่ในทะเบียน = ตำแหน่งที่ตรวจ
+    //  • ทะเบียนระบุไว้แล้ว → โชว์ค่านั้น แก้ได้ถ้าไม่ตรงของจริง
+    //  • ทะเบียนยังไม่ระบุ → ใส่ "พื้นที่ล่าสุดที่คนนี้เพิ่งบันทึก" ไว้ให้ ไม่ต้องพิมพ์ใหม่ทุกชิ้น
     const areaNow = (asset.location || '').trim();
-    el('recArea').value = areaNow || (knownAreas()[0] || '');
-    el('recAreaRow').classList.remove('hidden');
-    el('recAreaRow').querySelector('span').textContent = areaNow
-      ? 'พื้นที่จัดเก็บในทะเบียน (แก้ได้ถ้าไม่ตรง)'
-      : 'พื้นที่จัดเก็บในทะเบียน — ยังไม่เคยระบุ (บันทึกแล้วจะเติมให้ทะเบียน)';
+    const lastMine = lastAreaOfMine();
+    el('recLocation').value = areaNow || lastMine;
+    el('recLocLabel').textContent = areaNow
+      ? 'พื้นที่ / ตำแหน่งที่ตรวจ (ทะเบียนระบุไว้ — แก้ได้ถ้าไม่ตรง)'
+      : 'พื้นที่ / ตำแหน่งที่ตรวจ (ทะเบียนยังไม่ระบุ)';
+    el('recLocHint').textContent = areaNow
+      ? 'แก้แล้วบันทึก = อัปเดตพื้นที่ในทะเบียนให้ด้วย'
+      : (lastMine ? 'ใส่พื้นที่ล่าสุดที่คุณบันทึกไว้ให้แล้ว — แก้ได้ตามจริง บันทึกแล้วจะเติมลงทะเบียนให้'
+        : 'พิมพ์พื้นที่ได้เลย บันทึกแล้วระบบจะเติมลงทะเบียนให้');
     renderAreaList();
     el('unlistedFields').classList.add('hidden');
     el('recForm').classList.toggle('hidden', !state.canWrite);
@@ -2014,7 +2050,9 @@ const App = (() => {
     el('recWarn').classList.add('hidden');
     el('recHistory').innerHTML = '';
     resetRecForm();
-    el('recAreaRow').classList.add('hidden');    // นอกทะเบียนยังไม่มีแถวในทะเบียนให้เขียนพื้นที่
+    el('recLocLabel').textContent = 'พื้นที่ / ตำแหน่งที่พบ';
+    el('recLocHint').textContent = '';
+    el('recLocation').value = lastAreaOfMine();
     el('unlistedFields').classList.remove('hidden');
     el('unlInv').value = code || '';
     el('unlDesc').value = '';
@@ -2029,8 +2067,6 @@ const App = (() => {
     el('moveSite').value = '';
     el('moveDoc').value = '';
     el('moveDate').value = todayISO();
-    el('recLocation').value = cacheGet('avLastLocation') || '';
-    el('recArea').value = '';
     el('recNote').value = '';
     el('photoStrip').innerHTML = '';
     el('gpsLine').innerHTML = icon('pin') + ' กำลังหาพิกัด GPS...';
@@ -2150,9 +2186,8 @@ const App = (() => {
     const pieceNo = await resolvePiece(inv);
     if (pieceNo === null) return;
     const location = el('recLocation').value.trim();
-    if (location) cacheSet('avLastLocation', location);
-    // พื้นที่จัดเก็บในทะเบียน — เขียนกลับเฉพาะเมื่อผู้ตรวจแก้/เติมค่าใหม่
-    const areaNew = el('recArea').value.trim();
+    if (location) { cacheSet('avLastLocation', location); rememberArea(location); }
+    // ช่องเดียวใช้ทั้งผลตรวจและทะเบียน — เขียนลงทะเบียนเมื่อค่าต่างจากเดิม
     const areaOld = rec.asset ? (rec.asset.location || '').trim() : '';
     try {
       await queueRecord({
@@ -2169,9 +2204,8 @@ const App = (() => {
     } catch (e) {
       return toast('บันทึกลงเครื่องไม่ได้: ' + e.message, 'error');
     }
-    if (rec.asset && areaNew !== areaOld) {
-      rememberArea(areaNew);
-      applyAreaTo([inv], areaNew);       // ไม่ต้องรอ — ผลตรวจบันทึกไปแล้ว
+    if (rec.asset && location && location !== areaOld) {
+      applyAreaTo([inv], location);      // ไม่ต้องรอ — ผลตรวจบันทึกไปแล้ว
     }
     afterDataChange();
     const fromScanner = rec.fromScanner;
@@ -2649,7 +2683,7 @@ const App = (() => {
     if (!state.bulk.cats.length) state.bulk.cats = [cats[0]];
     el('bulkCatSearch').value = '';
     renderCatPicker();
-    el('bulkLocation').value = cacheGet('avLastLocation') || '';
+    el('bulkLocation').value = lastAreaOfMine();
     el('bulkLast').textContent = '';
     el('bulkTail').value = '';
     state.bulk.busy = false;
@@ -2915,7 +2949,7 @@ const App = (() => {
     const pieceNo = await resolvePiece(code);
     if (pieceNo === null) { tailEl.value = ''; updateTailHint(); tailEl.focus(); return; }
     const location = el('bulkLocation').value.trim();
-    if (location) cacheSet('avLastLocation', location);
+    if (location) { cacheSet('avLastLocation', location); rememberArea(location); }
     try {
       await queueRecord({
         inventoryNumber: code, assetType: asset.assetType, pieceNo: pieceNo,
@@ -2924,6 +2958,7 @@ const App = (() => {
     } catch (e) {
       return toast('บันทึกลงเครื่องไม่ได้: ' + e.message, 'error');
     }
+    fillAreaIfEmpty([code], location);    // โหมดต่อเนื่อง = ยืนอยู่โซนเดียว เติมให้ที่ยังว่าง
     state.bulk.count++;
     afterDataChange();
     updateBulkView();
@@ -3002,7 +3037,7 @@ const App = (() => {
     syncCombo('countCat');
     el('countCustomRow').classList.add('hidden');
     el('countCustom').value = '';
-    el('countLocation').value = cacheGet('avLastLocation') || '';
+    el('countLocation').value = lastAreaOfMine();
     el('countNote').value = '';
     el('countN').value = '1';
     state.count.n = 1;
