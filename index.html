@@ -9,11 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.3.2">
+  <link rel="stylesheet" href="styles.css?v=2.3.3">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
-    <div class="brand-mark"><span data-icon="clipboard"></span><div><b>ATLAS</b><small>ASSET INSPECTION</small></div></div>
+    <div class="brand-mark"><span data-icon="clipboard"></span><div><b>RITTA</b><small>ASSET INSPECTION</small></div></div>
     <div class="spinner"></div>
     <p>กำลังเตรียมระบบ...</p>
   </div>
@@ -21,7 +21,7 @@
   <!-- ── เข้าสู่ระบบ / สมัครสมาชิก ─────────────────────────────────────────── -->
   <div id="loginOverlay" class="login-overlay hidden">
     <form class="login-card" onsubmit="event.preventDefault(); App.submitAuth();">
-      <div class="brand-mark"><span data-icon="clipboard"></span><div><b>ATLAS</b><small>ASSET INSPECTION</small></div></div>
+      <div class="brand-mark"><span data-icon="clipboard"></span><div><b>RITTA</b><small>ASSET INSPECTION</small></div></div>
       <h2 id="authTitle">เข้าสู่ระบบ</h2>
       <p class="auth-sub">ระบบตรวจนับทรัพย์สิน</p>
       <div class="auth-tabs">
@@ -45,7 +45,7 @@
 
   <div id="pendingOverlay" class="login-overlay hidden">
     <div class="login-card">
-      <div class="brand-mark"><span data-icon="clipboard"></span><div><b>ATLAS</b><small>ASSET INSPECTION</small></div></div>
+      <div class="brand-mark"><span data-icon="clipboard"></span><div><b>RITTA</b><small>ASSET INSPECTION</small></div></div>
       <h2>บัญชีรออนุมัติ</h2>
       <p class="auth-sub">ส่งคำขอใช้งานถึงผู้ดูแลแล้ว กรุณารอการอนุมัติ</p>
       <p class="pending-live"><span class="live-dot"></span> ระบบเช็คสถานะอัตโนมัติ — อนุมัติเมื่อไหร่เข้าใช้งานได้ทันที</p>
@@ -475,9 +475,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.3.2" defer></script>
-  <script src="config.js?v=2.3.2"></script>
-  <script src="src/assetStore.js?v=2.3.2"></script>
-  <script src="app.js?v=2.3.2"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.3.3" defer></script>
+  <script src="config.js?v=2.3.3"></script>
+  <script src="src/assetStore.js?v=2.3.3"></script>
+  <script src="app.js?v=2.3.3"></script>
 </body>
 </html>
