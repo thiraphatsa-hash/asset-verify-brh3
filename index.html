@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.3.3">
+  <link rel="stylesheet" href="styles.css?v=2.4.0">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -188,8 +188,21 @@
           </div>
           <div class="tool-buttons">
             <button class="tool-button" type="button" onclick="App.openBulk()"><span data-icon="bolt"></span> ตรวจต่อเนื่อง</button>
+            <button class="tool-button" type="button" onclick="App.openCountSheet()"><span data-icon="hash"></span> นับจำนวน</button>
             <button class="tool-button" type="button" onclick="App.openUnlisted('')"><span data-icon="plus"></span> นอกทะเบียน</button>
+            <button id="colBtn" class="tool-button" type="button" onclick="App.toggleColPicker(event)"><span data-icon="columns"></span> คอลัมน์</button>
+            <button class="tool-button" type="button" onclick="App.go('activity')"><span data-icon="history"></span> ประวัติการบันทึก</button>
             <button class="tool-button" type="button" onclick="App.exportExcel()"><span data-icon="download"></span> Excel</button>
+          </div>
+          <div id="colPanel" class="combo-panel multi-panel hidden">
+            <p id="colAutoNote" class="hint"></p>
+            <div class="multi-tools">
+              <button type="button" class="chip" onclick="App.pickAllCols(true)">แสดงทั้งหมด</button>
+              <button type="button" class="chip" onclick="App.pickAllCols(false)">เหลือเฉพาะหลัก</button>
+              <button type="button" class="chip" onclick="App.resetCols()">อัตโนมัติ</button>
+              <button type="button" class="chip primary-chip" onclick="App.closeColPicker()">เสร็จ</button>
+            </div>
+            <div id="colList" class="combo-list"></div>
           </div>
         </div>
 
@@ -200,6 +213,47 @@
           </table>
         </div>
         <div id="cardWrap" class="asset-list hidden"></div>
+      </section>
+
+      <!-- ══ ประวัติการบันทึก (ตามหา/แก้รายการที่บันทึกผิด) ══ -->
+      <section id="page-activity" class="page">
+        <div class="page-head">
+          <div>
+            <p class="kicker">ACTIVITY LOG</p>
+            <h2>ประวัติการบันทึก</h2>
+          </div>
+          <button class="outline-button" type="button" onclick="App.go('list')"><span data-icon="back"></span> กลับรายการ</button>
+        </div>
+        <div class="toolbar">
+          <label class="search-box"><span data-icon="search"></span>
+            <input id="actSearch" type="search" placeholder="ค้นหา: RT code / ตำแหน่งที่ตรวจ" oninput="App.setActSearch(this.value)">
+          </label>
+          <div class="filter-row">
+            <select id="actWho" class="filter-select" onchange="App.setActWho(this.value)">
+              <option value="">ผู้บันทึก: ทุกคน</option>
+            </select>
+            <select id="actResult" class="filter-select" onchange="App.setActResult(this.value)">
+              <option value="">ผล: ทั้งหมด</option>
+              <option value="FOUND">พบ</option>
+              <option value="NOT_FOUND">ไม่พบ</option>
+              <option value="MOVED">ย้ายออก</option>
+            </select>
+            <select id="actRange" class="filter-select" onchange="App.setActRange(this.value)">
+              <option value="">ช่วงเวลา: ทั้งหมด</option>
+              <option value="today">วันนี้</option>
+              <option value="1">24 ชั่วโมงล่าสุด</option>
+              <option value="7">7 วันล่าสุด</option>
+            </select>
+            <select id="actSort" class="filter-select" onchange="App.setActSort(this.value)">
+              <option value="new">เรียง: บันทึกล่าสุดก่อน</option>
+              <option value="old">เรียง: บันทึกเก่าสุดก่อน</option>
+            </select>
+            <span id="actCount" class="count-pill">0 รายการ</span>
+          </div>
+          <p class="hint">กด <b>ดินสอ</b> เพื่อเปิดรายการนั้นแล้วบันทึกผลใหม่ทับ (ระบบเก็บทุกครั้งไว้ ผลล่าสุดคือผลที่ใช้)
+            · กด <b>ถังขยะ</b> เพื่อลบรายการที่บันทึกผิดออกจากประวัติ</p>
+        </div>
+        <div id="actList" class="act-list"></div>
       </section>
 
       <!-- ══ Dashboard ของรอบ ══ -->
@@ -416,6 +470,43 @@
     </div>
   </div>
 
+  <!-- ── Modal: นับจำนวน (ของที่ไม่ทราบ RT code) ───────────────────────────── -->
+  <div id="countModal" class="modal hidden" onclick="if(event.target===this)App.closeCount()">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div><h3><span data-icon="hash"></span> นับจำนวนตามหมวด</h3><p id="countSub"></p></div>
+        <button class="close-button" type="button" onclick="App.closeCount()"><span data-icon="close"></span></button>
+      </div>
+      <div class="sheet-body">
+        <p class="hint">ใช้ตอนเจอของหน้างานแต่<b>ไม่ทราบ RT code</b> เช่น เก้าอี้กองรวมกัน —
+          เลือกหมวดแล้วกรอกจำนวนที่นับได้ ระบบเก็บแยกจากผลตรวจรายชิ้น <b>ไม่กระทบสถานะของรหัสใดๆ</b>
+          และรวมยอดสะสมให้เองถ้านับหลายจุด</p>
+        <label class="field"><span>หมวดทรัพย์สิน</span>
+          <select id="countCat" onchange="App.setCountCat(this.value)"></select></label>
+        <div class="field">
+          <span>จำนวนที่นับได้ (ชิ้น)</span>
+          <div class="count-entry">
+            <button type="button" class="count-step" onclick="App.adjustCount(-1)">−</button>
+            <input id="countN" class="count-input mono" type="text" inputmode="numeric"
+              pattern="[0-9]*" value="1" autocomplete="off">
+            <button type="button" class="count-step" onclick="App.adjustCount(1)">+</button>
+            <button type="button" class="count-step wide" onclick="App.adjustCount(5)">+5</button>
+            <button type="button" class="count-step wide" onclick="App.adjustCount(10)">+10</button>
+          </div>
+        </div>
+        <label class="field"><span>จุดที่นับ</span>
+          <input id="countLocation" type="text" list="locList" placeholder="เช่น ชั้น 3 โซน B"></label>
+        <label class="field"><span>หมายเหตุ (ไม่บังคับ)</span>
+          <input id="countNote" type="text" placeholder="เช่น กองรวมยังไม่ติดสติกเกอร์"></label>
+        <button class="primary-button full-width big-save" type="button" onclick="App.saveCountEntry()">
+          บันทึกยอดนับ</button>
+        <div id="countCompare" class="count-compare"></div>
+        <p class="form-label">การนับในหมวดนี้</p>
+        <div id="countHistory" class="count-history"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Modal: เลขท้ายตรงกับหลายหมวด ให้เลือกว่าอันไหน ───────────────────── -->
   <div id="pickModal" class="modal hidden" onclick="if(event.target===this)App.pickChoose(null)">
     <div class="sheet dup-sheet">
@@ -475,9 +566,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.3.3" defer></script>
-  <script src="config.js?v=2.3.3"></script>
-  <script src="src/assetStore.js?v=2.3.3"></script>
-  <script src="app.js?v=2.3.3"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.4.0" defer></script>
+  <script src="config.js?v=2.4.0"></script>
+  <script src="src/assetStore.js?v=2.4.0"></script>
+  <script src="app.js?v=2.4.0"></script>
 </body>
 </html>

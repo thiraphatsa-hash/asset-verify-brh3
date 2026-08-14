@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.3.3';
+  const APP_VERSION = 'v2.4.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -52,7 +52,11 @@ const App = (() => {
     note: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8.5 13h7M8.5 17h4"/>',
     clipboard: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="m8.5 13 2.5 2.5 4.5-5"/>',
     square: '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/>',
-    alert: '<path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/>'
+    alert: '<path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/>',
+    edit: '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/>',
+    columns: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
+    history: '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3 4v4h4"/><path d="M12 7.5V12l3 2"/>',
+    hash: '<path d="M5 9h14M5 15h14M10 4 8.5 20M15.5 4 14 20"/>'
   };
   function icon(name, cls) {
     const body = ICONS[name];
@@ -175,6 +179,7 @@ const App = (() => {
     activeSession: null,
     master: [],
     logs: [],
+    counts: [],
     queueItems: [],
     latest: new Map(),
     selection: new Set(),
@@ -182,7 +187,12 @@ const App = (() => {
     authMode: 'login',
     page: 'home',
     home: { q: '', status: '', sort: 'created' },
-    ui: { type: 'FIXED', view: 'table', q: '', cat: '', staff: '', status: '', sort: 'inv' },
+    ui: {
+      type: 'FIXED', view: 'table', q: '', cat: '', staff: '', status: '', sort: 'inv',
+      cols: { FIXED: null, RENTAL: null }        // null = อัตโนมัติตามขนาดจอ
+    },
+    act: { who: '', result: '', range: '', q: '', sort: 'new' },   // หน้าประวัติการบันทึก
+    count: { cat: '', n: 1 },
     rec: null,
     accessSeen: {},
     accessTimer: null,
@@ -325,6 +335,19 @@ const App = (() => {
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         try {
+          if (it.kind === 'count') {                 // ยอดนับตามหมวด (ไม่มีรูป ไม่มีรายชิ้น)
+            const savedCount = await AssetStore.saveCount({
+              clientId: it.clientId, sessionId: it.sessionId, site: it.site,
+              assetType: it.assetType, categoryCode: it.categoryCode, counted: it.counted,
+              locationText: it.locationText || '', note: it.note || '',
+              inspector: it.inspector, countedAt: it.countedAt
+            });
+            await qDel(it.clientId);
+            state.queueItems = state.queueItems.filter((q) => q.clientId !== it.clientId);
+            if (savedCount && savedCount.countId) addCountLocal(savedCount);
+            sent++;
+            continue;
+          }
           const photos = it.photos || [];
           for (let p = 0; p < photos.length; p++) {
             if (!photos[p].path) {
@@ -391,7 +414,32 @@ const App = (() => {
     };
   }
   function queueOfSession(id) {
-    return state.queueItems.filter((q) => q.sessionId === id).map(queueToLog);
+    return state.queueItems
+      .filter((q) => q.sessionId === id && q.kind !== 'count')
+      .map(queueToLog);
+  }
+  /** ยอดนับที่ยังค้างส่ง — ให้หน้าจอเห็นยอดทันทีแม้ยังออฟไลน์ */
+  function queueCountsOfSession(id) {
+    return state.queueItems.filter((q) => q.sessionId === id && q.kind === 'count').map((it) => ({
+      countId: 'pending-' + it.clientId, clientId: it.clientId, sessionId: it.sessionId,
+      site: it.site, assetType: it.assetType, categoryCode: it.categoryCode,
+      counted: it.counted, locationText: it.locationText, note: it.note,
+      inspector: it.inspector, countedAt: it.countedAt, pending: true
+    }));
+  }
+  /** ยอดนับทั้งหมดของรอบที่เปิดอยู่ (ที่ส่งแล้ว + ที่ยังค้างส่ง) */
+  function allCounts() {
+    const id = state.activeSession ? state.activeSession.sessionId : null;
+    if (!id) return [];
+    return state.counts.concat(queueCountsOfSession(id));
+  }
+  function addCountLocal(row) {
+    if (!row || !row.countId) return;
+    const active = state.activeSession ? state.activeSession.sessionId : null;
+    if (row.sessionId && active && row.sessionId !== active) return;
+    const dup = state.counts.some((c) => c.countId === row.countId ||
+      (row.clientId && c.clientId === row.clientId));
+    if (!dup) state.counts.push(row);
   }
   function allLogs() {
     const id = state.activeSession ? state.activeSession.sessionId : null;
@@ -699,11 +747,14 @@ const App = (() => {
         } else {
           state.activeSession = fresh;
           const data = await Promise.all([
-            AssetStore.loadMaster(fresh.sessionId), AssetStore.loadLogs(fresh.sessionId)]);
+            AssetStore.loadMaster(fresh.sessionId), AssetStore.loadLogs(fresh.sessionId),
+            AssetStore.loadCounts(fresh.sessionId)]);
           state.master = data[0];
           state.logs = data[1];
+          state.counts = data[2] || [];
           cacheSet('avMaster_' + fresh.sessionId, state.master);
           cacheSet('avLogs_' + fresh.sessionId, state.logs);
+          cacheSet('avCounts_' + fresh.sessionId, state.counts);
           afterDataChange();
         }
       }
@@ -735,6 +786,7 @@ const App = (() => {
     renderList();
     renderSessions();
     if (state.page === 'dash') renderDash();
+    if (state.page === 'activity') renderActivity();
     updateSyncChip();
   }
 
@@ -839,15 +891,19 @@ const App = (() => {
     state.selection.clear();
     state.master = cacheGet('avMaster_' + id) || [];
     state.logs = cacheGet('avLogs_' + id) || [];
+    state.counts = cacheGet('avCounts_' + id) || [];
     afterDataChange();
     go(target || 'list');
     try {
       busy('กำลังโหลดทะเบียนของรอบนี้...');
-      const data = await Promise.all([AssetStore.loadMaster(id), AssetStore.loadLogs(id)]);
+      const data = await Promise.all([
+        AssetStore.loadMaster(id), AssetStore.loadLogs(id), AssetStore.loadCounts(id)]);
       state.master = data[0];
       state.logs = data[1];
+      state.counts = data[2] || [];
       cacheSet('avMaster_' + id, state.master);
       cacheSet('avLogs_' + id, state.logs);
+      cacheSet('avCounts_' + id, state.counts);
       afterDataChange();
       ensureRealtime();
     } catch (e) {
@@ -873,7 +929,11 @@ const App = (() => {
         state.logs = [];
         go('home');
       }
-      try { localStorage.removeItem('avMaster_' + id); localStorage.removeItem('avLogs_' + id); } catch (e) {}
+      try {
+        localStorage.removeItem('avMaster_' + id);
+        localStorage.removeItem('avLogs_' + id);
+        localStorage.removeItem('avCounts_' + id);
+      } catch (e) {}
       await refreshAll(true);
       toast('ลบรอบตรวจแล้ว', 'success');
     } catch (e) {
@@ -1239,6 +1299,117 @@ const App = (() => {
       ' · <b class="m-' + (l.method === 'SCAN' ? 'scan' : 'manual') + '">' + l.method + '</b>' +
       (l.pending ? ' · <b class="pending-sync">รอส่ง</b>' : '') + '</small></span>';
   }
+  // ── นิยามคอลัมน์ของตาราง (เลือกแสดง/ซ่อนได้เอง) ─────────────────────────────
+  // always: ปิดไม่ได้ (แกนหลักของฟอร์ม) · group 'move': คอลัมน์ในกลุ่ม "ย้ายออก"
+  const COL_INV = {
+    key: 'inv', label: 'Inventory Number', cls: 'th-inv', always: true,
+    render: (c) => '<td class="mono nowrap inv-cell">' + esc(c.asset.inventoryNumber) +
+      '<span class="sm-status">' + statusCell(c.latest) + '</span></td>'
+  };
+  const COL_DESC = {
+    key: 'desc', label: 'Description', cls: 'th-desc', always: true,
+    render: (c) => '<td class="col-desc">' + esc(c.asset.description || '') +
+      (c.latest ? '<small class="row-meta">' + esc(c.latest.inspector || '') + ' · ' +
+        esc(thaiDT(c.latest.verifiedAt)) + (c.latest.pending ? ' · รอส่ง' : '') + '</small>' : '') + '</td>'
+  };
+  const COLS_TAIL = [
+    { key: 'moveSite', label: 'ส่งไป SITE', cls: 'c-lg', group: 'move',
+      get: (c) => (c.moved ? c.moved.moveToSite : '') },
+    { key: 'moveDoc', label: 'เลขที่ใบส่ง', cls: 'c-lg', group: 'move',
+      get: (c) => (c.moved ? c.moved.moveDocNo : '') },
+    { key: 'moveDate', label: 'วันที่ส่ง', cls: 'c-lg', group: 'move',
+      get: (c) => (c.moved && c.moved.moveDate ? thaiD(c.moved.moveDate) : '') },
+    { key: 'note', label: 'หมายเหตุ', cls: 'c-lg note-cell',
+      get: (c) => (c.latest ? c.latest.note : '') }
+  ];
+  const TABLE_COLS = {
+    FIXED: [
+      { key: 'no', label: 'NO.', cls: 'c-lg num', get: (c) => String(c.index + 1) },
+      { key: 'assetClass', label: 'Asset Class', cls: 'c-lg', get: (c) => c.asset.assetClass },
+      { key: 'assetNumber', label: 'Asset Number', cls: 'c-lg mono', get: (c) => c.asset.assetNumber },
+      { key: 'subNumber', label: 'Sub Numb', cls: 'c-xl', get: (c) => c.asset.subNumber },
+      COL_INV, COL_DESC,
+      { key: 'serial', label: 'Serial Number', cls: 'c-xl', get: (c) => c.asset.serialNumber },
+      { key: 'staff', label: 'Staff – Text', cls: 'c-md', get: (c) => (c.asset.staffText || '').trim() },
+      { key: 'site', label: 'Current Site', cls: 'c-xl', get: (c) => c.asset.currentSite }
+    ].concat(COLS_TAIL),
+    RENTAL: [
+      { key: 'no', label: 'NO.', cls: 'c-lg num', get: (c) => String(c.index + 1) },
+      { key: 'material', label: 'Material', cls: 'c-md mono', get: (c) => c.asset.materialCode },
+      COL_DESC, COL_INV,
+      { key: 'plant', label: 'Plan', cls: 'c-xl', get: (c) => c.asset.plant },
+      { key: 'sloc', label: 'Sloc', cls: 'c-xl', get: (c) => c.asset.sloc }
+    ].concat(COLS_TAIL)
+  };
+  /** คอลัมน์ที่จะแสดงจริงของประเภทที่กำลังดู */
+  function visibleCols(type) {
+    const t = type || state.ui.type;
+    const defs = TABLE_COLS[t] || TABLE_COLS.FIXED;
+    const pick = state.ui.cols[t];
+    if (!pick) return defs.slice();                  // อัตโนมัติ = แสดงทั้งหมด (ซ่อนตามจอด้วย CSS)
+    return defs.filter((c) => c.always || pick.indexOf(c.key) >= 0);
+  }
+  function toggleColPicker(ev) {
+    if (ev) ev.stopPropagation();
+    const panel = el('colPanel');
+    const willOpen = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden', !willOpen);
+    el('colBtn').classList.toggle('open', willOpen);
+    if (willOpen) {
+      renderColPicker();
+      setTimeout(() => panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 30);
+    }
+  }
+  function closeColPicker() {
+    el('colPanel').classList.add('hidden');
+    el('colBtn').classList.remove('open');
+  }
+  function renderColPicker() {
+    const t = state.ui.type;
+    const defs = TABLE_COLS[t] || TABLE_COLS.FIXED;
+    const pick = state.ui.cols[t];
+    const auto = !pick;
+    el('colAutoNote').textContent = auto
+      ? 'ตอนนี้เป็นโหมดอัตโนมัติ — แสดงทุกคอลัมน์และซ่อนคอลัมน์รองเองเมื่อจอแคบ'
+      : 'เลือกเอง — คอลัมน์ที่ติ๊กไว้จะแสดงทุกขนาดจอ';
+    el('colList').innerHTML = defs.map((c) => {
+      const on = auto || c.always || pick.indexOf(c.key) >= 0;
+      return '<button type="button" class="combo-item multi-item' + (on ? ' on' : '') +
+        (c.always ? ' locked' : '') + '"' +
+        (c.always ? ' disabled title="คอลัมน์หลัก ปิดไม่ได้"' :
+          ' onclick="App.toggleCol(\'' + esc(c.key) + '\')"') + '>' +
+        '<span class="multi-box">' + (on ? '✓' : '') + '</span>' +
+        '<span>' + esc(c.label) + '</span>' +
+        (c.always ? '<small>คงไว้เสมอ</small>' : '') + '</button>';
+    }).join('');
+  }
+  function toggleCol(key) {
+    const t = state.ui.type;
+    const defs = TABLE_COLS[t] || TABLE_COLS.FIXED;
+    let pick = state.ui.cols[t];
+    if (!pick) pick = defs.filter((c) => !c.always).map((c) => c.key);   // เริ่มจาก "แสดงทั้งหมด"
+    const i = pick.indexOf(key);
+    if (i >= 0) pick.splice(i, 1); else pick.push(key);
+    state.ui.cols[t] = pick;
+    cacheSet('avCols_' + t, pick);
+    renderColPicker();
+    renderList();
+  }
+  function pickAllCols(on) {
+    const t = state.ui.type;
+    const defs = TABLE_COLS[t] || TABLE_COLS.FIXED;
+    state.ui.cols[t] = on ? defs.filter((c) => !c.always).map((c) => c.key) : [];
+    cacheSet('avCols_' + t, state.ui.cols[t]);
+    renderColPicker();
+    renderList();
+  }
+  function resetCols() {
+    const t = state.ui.type;
+    state.ui.cols[t] = null;
+    try { localStorage.removeItem('avCols_' + t); } catch (e) {}
+    renderColPicker();
+    renderList();
+  }
   function renderList() {
     if (!state.activeSession) {
       el('assetTbody').innerHTML = '';
@@ -1258,45 +1429,28 @@ const App = (() => {
 
     if (tableMode) {
       // ── โครงตารางยึดตามฟอร์มรายงานตรวจสอบทรัพย์สินต้นฉบับ (.xls) ──
+      // คอลัมน์ทั้งหมดนิยามไว้ที่ TABLE_COLS → เลือกเปิด/ปิดได้เอง (ปุ่ม "คอลัมน์")
       const allSel = list.length > 0 && list.every((a) => state.selection.has(a.inventoryNumber));
       const chk = state.canWrite ? '<th class="col-check" rowspan="2"><input type="checkbox" id="checkAll"' +
         (allSel ? ' checked' : '') + ' title="เลือกทั้งหมดที่กรองอยู่"></th>' : '';
-      el('assetThead').innerHTML = isFixed
-        ? '<tr>' + chk +
-            '<th rowspan="2" class="c-lg">NO.</th>' +
-            '<th rowspan="2" class="c-lg">Asset Class</th>' +
-            '<th rowspan="2" class="c-lg">Asset Number</th>' +
-            '<th rowspan="2" class="c-xl">Sub Numb</th>' +
-            '<th rowspan="2" class="th-inv">Inventory Number</th>' +
-            '<th rowspan="2" class="th-desc">Description</th>' +
-            '<th rowspan="2" class="c-xl">Serial Number</th>' +
-            '<th rowspan="2" class="c-md">Staff – Text</th>' +
-            '<th rowspan="2" class="c-xl">Current Site</th>' +
-            '<th colspan="2" class="yn-group">ผลการตรวจเช็ค</th>' +
-            '<th colspan="3" class="c-lg">ย้ายออก</th>' +
-            '<th rowspan="2" class="c-lg">หมายเหตุ</th>' +
-            '<th rowspan="2" class="col-more"></th>' +
-          '</tr><tr>' +
-            '<th class="col-yn yn-yes">Yes</th><th class="col-yn yn-no">No</th>' +
-            '<th class="c-lg">ส่งไป SITE</th><th class="c-lg">เลขที่ใบส่ง</th><th class="c-lg">วันที่ส่ง</th>' +
-          '</tr>'
-        : '<tr>' + chk +
-            '<th rowspan="2" class="c-lg">NO.</th>' +
-            '<th rowspan="2" class="c-md">Material</th>' +
-            '<th rowspan="2" class="th-desc">Description</th>' +
-            '<th rowspan="2" class="th-inv">Inventory Number</th>' +
-            '<th rowspan="2" class="c-xl">Plan</th>' +
-            '<th rowspan="2" class="c-xl">Sloc</th>' +
-            '<th colspan="2" class="yn-group">ผลการตรวจเช็ค</th>' +
-            '<th colspan="3" class="c-lg">ย้ายออก</th>' +
-            '<th rowspan="2" class="c-lg">หมายเหตุ</th>' +
-            '<th rowspan="2" class="col-more"></th>' +
-          '</tr><tr>' +
-            '<th class="col-yn yn-yes">Yes</th><th class="col-yn yn-no">No</th>' +
-            '<th class="c-lg">ส่งไป SITE</th><th class="c-lg">เลขที่ใบส่ง</th><th class="c-lg">วันที่ส่ง</th>' +
-          '</tr>';
+      const cols = visibleCols();
+      const auto = !state.ui.cols[state.ui.type];        // อัตโนมัติ = ซ่อนตามขนาดจอเหมือนเดิม
+      const clsOf = (c) => (auto ? (c.cls || '') : (c.cls || '').replace(/\bc-(md|lg|xl)\b/g, '')).trim();
+      const lead = cols.filter((c) => c.group !== 'move' && c.key !== 'note');
+      const moves = cols.filter((c) => c.group === 'move');
+      const noteCol = cols.find((c) => c.key === 'note');
+      el('assetThead').innerHTML =
+        '<tr>' + chk +
+          lead.map((c) => '<th rowspan="2" class="' + clsOf(c) + '">' + esc(c.label) + '</th>').join('') +
+          '<th colspan="2" class="yn-group">ผลการตรวจเช็ค</th>' +
+          (moves.length ? '<th colspan="' + moves.length + '" class="' + (auto ? 'c-lg' : '') + '">ย้ายออก</th>' : '') +
+          (noteCol ? '<th rowspan="2" class="' + clsOf(noteCol) + '">หมายเหตุ</th>' : '') +
+          '<th rowspan="2" class="col-more"></th>' +
+        '</tr><tr>' +
+          '<th class="col-yn yn-yes">Yes</th><th class="col-yn yn-no">No</th>' +
+          moves.map((c) => '<th class="' + clsOf(c) + '">' + esc(c.label) + '</th>').join('') +
+        '</tr>';
 
-      const cell = (v, cls) => '<td class="' + (cls || '') + '">' + esc(v || '—') + '</td>';
       el('assetTbody').innerHTML = list.map((a, i) => {
         const latest = state.latest.get(a.inventoryNumber);
         const cls = classify(latest);
@@ -1309,33 +1463,15 @@ const App = (() => {
         const ynNo = '<td class="col-yn yn-no"><input type="checkbox" class="yn-box no' +
           (cls === 'notfound' ? ' on' : '') + '" data-inv="' + inv + '" data-res="NOT_FOUND"' +
           (cls === 'notfound' ? ' checked' : '') + dis + ' title="ไม่พบ"></td>';
-        const mv = cls === 'moved' ? latest : null;
-        const info = latest
-          ? '<small class="row-meta">' + esc(latest.inspector || '') + ' · ' +
-            esc(thaiDT(latest.verifiedAt)) + (latest.pending ? ' · รอส่ง' : '') + '</small>'
-          : '';
+        const ctx = { asset: a, latest: latest, index: i, moved: cls === 'moved' ? latest : null };
+        const td = (c) => (c.render
+          ? c.render(ctx, clsOf(c))
+          : '<td class="' + clsOf(c) + '">' + esc(c.get(ctx) || '—') + '</td>');
         return '<tr class="row-' + cls + (sel ? ' row-selected' : '') + '" data-inv="' + inv + '">' +
           (state.canWrite ? '<td class="col-check"><input type="checkbox" class="row-check" data-inv="' +
             inv + '"' + (sel ? ' checked' : '') + '></td>' : '') +
-          '<td class="c-lg num">' + (i + 1) + '</td>' +
-          (isFixed
-            ? cell(a.assetClass, 'c-lg') + cell(a.assetNumber, 'c-lg mono') +
-              cell(a.subNumber, 'c-xl') +
-              '<td class="mono nowrap inv-cell">' + inv +
-                '<span class="sm-status">' + statusCell(latest) + '</span></td>' +
-              '<td class="col-desc">' + esc(a.description || '') + info + '</td>' +
-              cell(a.serialNumber, 'c-xl') + cell((a.staffText || '').trim(), 'c-md') +
-              cell(a.currentSite, 'c-xl')
-            : cell(a.materialCode, 'c-md mono') +
-              '<td class="col-desc">' + esc(a.description || '') + info + '</td>' +
-              '<td class="mono nowrap inv-cell">' + inv +
-                '<span class="sm-status">' + statusCell(latest) + '</span></td>' +
-              cell(a.plant, 'c-xl') + cell(a.sloc, 'c-xl')) +
-          ynYes + ynNo +
-          cell(mv ? mv.moveToSite : '', 'c-lg') +
-          cell(mv ? mv.moveDocNo : '', 'c-lg') +
-          cell(mv && mv.moveDate ? thaiD(mv.moveDate) : '', 'c-lg') +
-          cell(latest ? latest.note : '', 'c-lg note-cell') +
+          lead.map(td).join('') + ynYes + ynNo + moves.map(td).join('') +
+          (noteCol ? td(noteCol) : '') +
           '<td class="col-more"><button class="qbtn more" data-act="open" title="รายละเอียด / ย้ายออก / รูปถ่าย">' + icon('more') + '</button></td>' +
           '</tr>';
       }).join('') || '<tr><td colspan="16"><p class="empty-note">ไม่พบรายการตามเงื่อนไข</p></td></tr>';
@@ -1372,6 +1508,7 @@ const App = (() => {
     el('typeRENTAL').classList.toggle('active', t === 'RENTAL');
     renderFilterOptions();
     renderList();
+    if (!el('colPanel').classList.contains('hidden')) renderColPicker();
   }
   function setView(v) {
     state.ui.view = v;
@@ -1580,20 +1717,22 @@ const App = (() => {
 
   // ── นำทาง ──────────────────────────────────────────────────────────────────
   function go(page) {
-    if ((page === 'list' || page === 'dash') && !state.activeSession) {
+    if ((page === 'list' || page === 'dash' || page === 'activity') && !state.activeSession) {
       toast('เลือกรอบตรวจก่อน', 'warn');
       page = 'home';
     }
     state.page = page;
-    ['home', 'upload', 'list', 'dash', 'manage'].forEach((p) => {
+    ['home', 'upload', 'list', 'dash', 'activity', 'manage'].forEach((p) => {
       const sec = el('page-' + p);
       if (sec) sec.classList.toggle('active', p === page);
       const nav = el('nav-' + p);
       if (nav) nav.classList.toggle('active', p === page);
     });
+    // หน้าประวัติการบันทึกเป็นส่วนหนึ่งของงานในรอบ ให้ปุ่ม "รายการ" ยังสว่างอยู่
+    if (page === 'activity' && el('nav-list')) el('nav-list').classList.add('active');
     el('backHome').classList.toggle('hidden', page === 'home');
     const s = state.activeSession;
-    if ((page === 'list' || page === 'dash') && s) {
+    if ((page === 'list' || page === 'dash' || page === 'activity') && s) {
       el('topKicker').textContent = 'โครงการที่กำลังตรวจ';
       el('topTitle').textContent = s.site + (s.roundName ? ' · ' + s.roundName : '');
     } else if (page === 'upload') {
@@ -1604,6 +1743,7 @@ const App = (() => {
       el('topTitle').textContent = 'ระบบตรวจนับทรัพย์สิน';
     }
     if (page === 'dash') renderDash();
+    if (page === 'activity') renderActivity();
     if (page === 'manage') renderManage();
     if (page === 'list') updateBulkBar(); else el('bulkBar').classList.add('hidden');
     window.scrollTo(0, 0);
@@ -1614,7 +1754,6 @@ const App = (() => {
     const items = allLogs().filter((l) => l.inventoryNumber === inv)
       .sort((a, b) => String(b.verifiedAt).localeCompare(String(a.verifiedAt)));
     if (!items.length) { el('recHistory').innerHTML = ''; return; }
-    const isAdmin = state.profile && state.profile.role === 'admin';
     let html = '<h4>ประวัติการตรวจ (' + items.length + ' ครั้ง)</h4>';
     items.forEach((l) => {
       const cls = classify(l);
@@ -1632,7 +1771,7 @@ const App = (() => {
           '<a href="#" class="photo-link" data-path="' + esc(p) + '">' + icon('camera') + ' รูป ' + (i + 1) + '</a>').join('') +
         (l.pending ? '<span class="pending-sync">' + icon('clock') + ' รอส่ง' +
           (l.photoCount ? ' (' + l.photoCount + ' รูป)' : '') + '</span>' : '') +
-        (isAdmin && !l.pending
+        (canEditLog(l)
           ? '<button type="button" class="hist-del" data-log="' + esc(l.logId) + '" title="ลบรายการนี้">' + icon('trash') + '</button>'
           : '') +
         '</div>';
@@ -1862,8 +2001,22 @@ const App = (() => {
     if (asset) openRecord(asset, 'MANUAL', false);
   }
   async function deleteLogEntry(logId) {
-    if (!state.profile || state.profile.role !== 'admin') return;
-    if (!window.confirm('ลบรายการตรวจนี้ถาวร? (ใช้เฉพาะกรณีบันทึกผิดจริง)')) return;
+    const row = allLogs().find((l) => String(l.logId) === String(logId));
+    if (!row) return;
+    if (!canEditLog(row)) {
+      return toast('ลบได้เฉพาะรายการที่ตัวเองบันทึก (หรือให้ผู้ดูแลลบให้)', 'warn');
+    }
+    if (!window.confirm('ลบรายการตรวจนี้ถาวร? (ใช้เฉพาะกรณีบันทึกผิดจริง)\n\n' +
+      row.inventoryNumber + ' · ' + statusLabel(row) + ' · ' + thaiDT(row.verifiedAt))) return;
+    // ยังไม่ได้ส่งขึ้นเซิร์ฟเวอร์ = เอาออกจากคิวได้เลย
+    if (row.pending) {
+      const cid = row.clientId;
+      try { await qDel(cid); } catch (e) {}
+      state.queueItems = state.queueItems.filter((q) => q.clientId !== cid);
+      afterDataChange();
+      if (state.rec && state.rec.asset) renderHistory(state.rec.asset.inventoryNumber);
+      return toast('ลบรายการที่ยังไม่ได้ส่งแล้ว', 'success');
+    }
     try {
       busy('กำลังลบ...');
       await AssetStore.deleteLog(logId);
@@ -2601,6 +2754,240 @@ const App = (() => {
     updateSyncChip();
   }
 
+  // ── โหมดนับจำนวน (ของที่ไม่ทราบ RT code) ───────────────────────────────────
+  // เก็บแยกจากผลตรวจรายชิ้นโดยสิ้นเชิง — ไม่แตะสถานะของรหัสใดๆ
+  // ใช้เทียบ "ทะเบียนมีกี่ชิ้น ↔ นับเจอจริงกี่ชิ้น" ในหมวดนั้น
+  /** สรุปรายหมวด: จำนวนในทะเบียน · ผลตรวจรายชิ้น · ยอดนับสะสม · ส่วนต่าง */
+  function countSummary(type) {
+    const t = type || state.ui.type;
+    const map = {};
+    const row = (c) => {
+      if (!map[c]) {
+        map[c] = { cat: c, total: 0, found: 0, notfound: 0, moved: 0, pending: 0, counted: 0, entries: 0 };
+      }
+      return map[c];
+    };
+    state.master.filter((a) => a.assetType === t).forEach((a) => {
+      const g = row(a.categoryCode || '?');
+      g.total++;
+      g[classify(state.latest.get(a.inventoryNumber))]++;
+    });
+    allCounts().filter((c) => c.assetType === t).forEach((c) => {
+      const g = row(c.categoryCode || '?');
+      g.counted += Number(c.counted) || 0;
+      g.entries++;
+    });
+    return Object.keys(map).sort().map((k) => map[k]);
+  }
+  function countEntriesOf(cat, type) {
+    const t = type || state.ui.type;
+    return allCounts()
+      .filter((c) => c.assetType === t && c.categoryCode === cat)
+      .sort((a, b) => String(b.countedAt).localeCompare(String(a.countedAt)));
+  }
+  function openCountSheet() {
+    if (!state.canWrite) return;
+    if (!state.activeSession) return toast('เลือกรอบตรวจก่อน', 'warn');
+    const counts = catCounts();
+    const cats = Object.keys(counts).sort();
+    if (!cats.length) return toast('ยังไม่มีทะเบียนของประเภทนี้', 'warn');
+    if (!state.count.cat || cats.indexOf(state.count.cat) < 0) state.count.cat = cats[0];
+    el('countSub').textContent = state.ui.type === 'RENTAL' ? 'ทรัพย์สินของเช่า' : 'ทรัพย์สิน Fixed Assets';
+    el('countCat').innerHTML = cats.map((c) =>
+      '<option value="' + esc(c) + '">RT-' + esc(c) + ' — ทะเบียน ' + counts[c] + ' ชิ้น</option>').join('');
+    el('countCat').value = state.count.cat;
+    syncCombo('countCat');
+    el('countLocation').value = cacheGet('avLastLocation') || '';
+    el('countNote').value = '';
+    el('countN').value = '1';
+    state.count.n = 1;
+    updateCountView();
+    el('countModal').classList.remove('hidden');
+  }
+  function closeCount() {
+    el('countModal').classList.add('hidden');
+    updateSyncChip();
+  }
+  function setCountCat(v) {
+    state.count.cat = v;
+    updateCountView();
+  }
+  function adjustCount(delta) {
+    const input = el('countN');
+    const n = Math.max(0, (parseInt(input.value, 10) || 0) + delta);
+    input.value = String(n);
+    state.count.n = n;
+  }
+  function updateCountView() {
+    const cat = state.count.cat;
+    const g = countSummary().find((x) => x.cat === cat) ||
+      { total: 0, counted: 0, found: 0, notfound: 0, pending: 0, moved: 0 };
+    const diff = g.total - g.counted;
+    el('countCompare').innerHTML =
+      '<div class="cmp-grid">' +
+        '<div class="cmp-cell"><b>' + g.total + '</b><small>ทะเบียนหมวดนี้</small></div>' +
+        '<div class="cmp-cell ok"><b>' + g.counted + '</b><small>นับเจอสะสม</small></div>' +
+        '<div class="cmp-cell ' + (diff > 0 ? 'bad' : (diff < 0 ? 'warn' : 'ok')) + '"><b>' +
+          (diff > 0 ? diff : (diff < 0 ? '+' + Math.abs(diff) : 0)) + '</b><small>' +
+          (diff > 0 ? 'ยังไม่เจอ' : (diff < 0 ? 'เกินทะเบียน' : 'ครบพอดี')) + '</small></div>' +
+      '</div>' +
+      '<p class="hint">ตรวจรายชิ้นในหมวดนี้แล้ว: พบ <b>' + g.found + '</b> · ไม่พบ <b>' + g.notfound +
+      '</b> · ย้ายออก <b>' + g.moved + '</b> · ยังไม่ตรวจ <b>' + g.pending + '</b> ' +
+      '(ยอดนับด้านบนเป็นคนละส่วนกัน ไม่กระทบผลรายชิ้น)</p>';
+    const list = countEntriesOf(cat);
+    el('countHistory').innerHTML = list.length
+      ? list.map((c) => '<div class="count-row">' +
+          '<div><b>' + (Number(c.counted) || 0) + ' ชิ้น</b>' +
+          (c.locationText ? ' · ' + esc(c.locationText) : '') +
+          (c.note ? ' · ' + esc(c.note) : '') +
+          '<small>' + esc(thaiDT(c.countedAt)) + ' · ' + esc(c.inspector || '') +
+          (c.pending ? ' · รอส่ง' : '') + '</small></div>' +
+          (canEditCount(c) ? '<button class="qbtn del" type="button" title="ลบยอดนี้" ' +
+            'onclick="App.deleteCountEntry(\'' + esc(c.countId) + '\')">' + icon('trash') + '</button>' : '') +
+          '</div>').join('')
+      : '<p class="hint">ยังไม่มีการนับในหมวดนี้</p>';
+  }
+  function canEditCount(c) {
+    if (!state.profile) return false;
+    if (state.profile.role === 'admin') return true;
+    if (c.pending) return true;
+    return Boolean(c.createdBy && c.createdBy === state.profile.id);
+  }
+  async function saveCountEntry() {
+    const s = state.activeSession;
+    if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
+    const cat = el('countCat').value;
+    const n = parseInt(el('countN').value, 10);
+    if (!cat) return toast('เลือกหมวดก่อน', 'warn');
+    if (!(n > 0)) return toast('กรอกจำนวนที่นับได้ (มากกว่า 0)', 'warn');
+    const location = el('countLocation').value.trim();
+    if (location) cacheSet('avLastLocation', location);
+    const item = {
+      kind: 'count', clientId: AssetStore.uuid(), sessionId: s.sessionId, site: s.site,
+      assetType: state.ui.type, categoryCode: cat, counted: n,
+      locationText: location, note: el('countNote').value.trim(),
+      inspector: inspectorName(), countedAt: new Date().toISOString()
+    };
+    try {
+      await qPut(item);
+    } catch (e) {
+      return toast('บันทึกลงเครื่องไม่ได้: ' + e.message, 'error');
+    }
+    state.queueItems.push(item);
+    beep();
+    el('countN').value = '1';
+    el('countNote').value = '';
+    afterDataChange();
+    updateCountView();
+    toast('บันทึกยอดนับ ' + n + ' ชิ้น หมวด RT-' + cat, 'success');
+    flushQueue();
+  }
+  async function deleteCountEntry(id) {
+    const all = allCounts();
+    const row = all.find((c) => String(c.countId) === String(id));
+    if (!row) return;
+    if (!canEditCount(row)) return toast('ลบได้เฉพาะยอดที่ตัวเองบันทึก (หรือให้ผู้ดูแลลบให้)', 'warn');
+    if (!window.confirm('ลบยอดนับ ' + row.counted + ' ชิ้น ของหมวด RT-' + row.categoryCode + '?')) return;
+    try {
+      if (String(id).indexOf('pending-') === 0) {
+        const cid = String(id).slice('pending-'.length);
+        await qDel(cid);
+        state.queueItems = state.queueItems.filter((q) => q.clientId !== cid);
+      } else {
+        await AssetStore.deleteCount(id);
+        state.counts = state.counts.filter((c) => c.countId !== id);
+        if (state.activeSession) cacheSet('avCounts_' + state.activeSession.sessionId, state.counts);
+      }
+      afterDataChange();
+      updateCountView();
+      toast('ลบยอดนับแล้ว', 'success');
+    } catch (e) {
+      toast('ลบไม่สำเร็จ: ' + e.message, 'error');
+    }
+  }
+
+  // ── หน้าประวัติการบันทึก (ตามหา/แก้รายการที่บันทึกผิด) ──────────────────────
+  function canEditLog(l) {
+    if (!state.profile) return false;
+    if (state.profile.role === 'admin') return true;
+    if (l.pending) return true;
+    return Boolean(l.createdBy && l.createdBy === state.profile.id);
+  }
+  function actRows() {
+    let rows = allLogs().slice();
+    const a = state.act;
+    if (a.who) rows = rows.filter((l) => (l.inspector || '') === a.who);
+    if (a.result) {
+      rows = rows.filter((l) => (a.result === 'FOUND' ? l.result === 'FOUND' : l.result === a.result));
+    }
+    if (a.range) {
+      const now = Date.now();
+      const span = a.range === 'today' ? 0 : Number(a.range);
+      rows = rows.filter((l) => {
+        const t = new Date(l.verifiedAt).getTime();
+        if (a.range === 'today') return new Date(l.verifiedAt).toDateString() === new Date().toDateString();
+        return now - t <= span * 86400000;
+      });
+    }
+    if (a.q) {
+      const q = a.q.trim().toUpperCase();
+      rows = rows.filter((l) => (l.inventoryNumber || '').toUpperCase().indexOf(q) >= 0 ||
+        (l.unlistedDesc || '').toUpperCase().indexOf(q) >= 0 ||
+        (l.locationText || '').toUpperCase().indexOf(q) >= 0);
+    }
+    rows.sort((x, y) => (a.sort === 'old'
+      ? String(x.verifiedAt).localeCompare(String(y.verifiedAt))
+      : String(y.verifiedAt).localeCompare(String(x.verifiedAt))));
+    return rows;
+  }
+  function renderActivity() {
+    if (!state.activeSession) { el('actList').innerHTML = ''; return; }
+    // ตัวเลือกผู้บันทึกจากข้อมูลจริง
+    const people = Array.from(new Set(allLogs().map((l) => l.inspector).filter(Boolean))).sort();
+    const sel = el('actWho');
+    const cur = state.act.who;
+    sel.innerHTML = '<option value="">ผู้บันทึก: ทุกคน</option>' +
+      people.map((p) => '<option value="' + esc(p) + '">' + esc(p) + '</option>').join('');
+    sel.value = people.indexOf(cur) >= 0 ? cur : '';
+    if (sel.value !== cur) state.act.who = sel.value;
+    syncCombo('actWho');
+    const rows = actRows();
+    el('actCount').textContent = rows.length + ' รายการ';
+    const show = rows.slice(0, 300);
+    el('actList').innerHTML = show.length ? show.map((l) => {
+      const cls = classify(l);
+      const asset = state.master.find((a) => a.inventoryNumber === l.inventoryNumber);
+      const editable = canEditLog(l);
+      return '<div class="act-row st-' + cls + '">' +
+        '<div class="act-main">' +
+          '<div class="act-top"><b class="mono">' + esc(l.inventoryNumber || '(นอกทะเบียน)') + '</b>' +
+            statusCell(l) + (l.pieceNo > 1 ? '<span class="dup-badge">ชิ้นที่ ' + l.pieceNo + '</span>' : '') +
+            (l.pending ? '<span class="pill st-pending">รอส่ง</span>' : '') + '</div>' +
+          '<div class="act-desc">' + esc(asset ? (asset.description || '') : (l.unlistedDesc || '')) + '</div>' +
+          '<div class="act-meta">' + icon('clock') + ' ' + esc(thaiDT(l.verifiedAt)) +
+            ' · ' + icon('user') + ' ' + esc(l.inspector || '-') +
+            ' · ' + esc(l.method || '') +
+            (l.locationText ? ' · ' + icon('pin') + ' ' + esc(l.locationText) : '') +
+            (l.note ? ' · ' + esc(l.note) : '') + '</div>' +
+        '</div>' +
+        '<div class="act-actions">' +
+          (asset ? '<button class="qbtn" type="button" title="เปิดแก้ไข/บันทึกใหม่" ' +
+            'onclick="App.openAsset(\'' + esc(l.inventoryNumber) + '\')">' + icon('edit') + '</button>' : '') +
+          (editable ? '<button class="qbtn del" type="button" title="ลบรายการที่บันทึกผิด" ' +
+            'onclick="App.deleteLogEntry(\'' + esc(l.logId) + '\')">' + icon('trash') + '</button>' : '') +
+        '</div>' +
+      '</div>';
+    }).join('') + (rows.length > show.length
+      ? '<p class="hint">แสดง 300 รายการล่าสุดจากทั้งหมด ' + rows.length + ' — ใช้ตัวกรองเพื่อดูให้แคบลง</p>'
+      : '')
+      : '<p class="empty-note">ไม่พบการบันทึกตามเงื่อนไข</p>';
+  }
+  function setActWho(v) { state.act.who = v; renderActivity(); }
+  function setActResult(v) { state.act.result = v; renderActivity(); }
+  function setActRange(v) { state.act.range = v; renderActivity(); }
+  function setActSort(v) { state.act.sort = v; renderActivity(); }
+  function setActSearch(v) { state.act.q = v; renderActivity(); }
+
   // ── Dashboard ──────────────────────────────────────────────────────────────
   function typeStats(type) {
     const list = state.master.filter((a) => a.assetType === type);
@@ -2801,6 +3188,7 @@ const App = (() => {
           '<th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>ผล</th><th class="c-md">ผู้ตรวจ</th>' +
           '<th class="c-md">เวลา</th></tr></thead><tbody>' + recent + '</tbody></table></div>'
           : '<p class="hint">ยังไม่มีการตรวจในรอบนี้</p>') + '</div>' +
+      countCompareCard() +
       dashList('pf', icon('square') + ' ยังไม่ตรวจ — Fixed Assets', pendF.map(pendingRow)) +
       dashList('pr', icon('square') + ' ยังไม่ตรวจ — ของเช่า', pendR.map(pendingRow)) +
       dashList('nf', icon('close') + ' ไม่พบ', notFound) +
@@ -2810,6 +3198,34 @@ const App = (() => {
   function toggleSection(id) {
     const b = el('coll-' + id);
     if (b) b.classList.toggle('hidden');
+  }
+  /** การ์ดเทียบยอด "ทะเบียน ↔ นับเจอจริง" รายหมวด (เฉพาะหมวดที่มีการนับ) */
+  function countCompareCard() {
+    const rows = [];
+    ['FIXED', 'RENTAL'].forEach((t) => {
+      countSummary(t).filter((g) => g.entries > 0).forEach((g) => {
+        const diff = g.total - g.counted;
+        rows.push('<tr><td class="mono nowrap">RT-' + esc(g.cat) + '</td>' +
+          '<td class="c-md">' + (t === 'RENTAL' ? 'ของเช่า' : 'Fixed') + '</td>' +
+          '<td class="num">' + g.total + '</td>' +
+          '<td class="num"><b>' + g.counted + '</b></td>' +
+          '<td class="num"><b class="' + (diff > 0 ? 'txt-no' : (diff < 0 ? 'txt-dmg' : 'txt-ok')) + '">' +
+            (diff > 0 ? diff : (diff < 0 ? '+' + Math.abs(diff) : '0')) + '</b></td>' +
+          '<td class="c-md num">' + g.found + '</td>' +
+          '<td class="c-md num">' + g.notfound + '</td>' +
+          '<td class="c-md num">' + g.pending + '</td></tr>');
+      });
+    });
+    if (!rows.length) return '';
+    return '<div class="dash-card wide"><h4>' + icon('hash') +
+      ' เทียบยอดนับจำนวน (ของที่ไม่ทราบ RT code)</h4>' +
+      '<div class="table-wrap flat"><table class="asset-table mini"><thead><tr>' +
+      '<th>หมวด</th><th class="c-md">ประเภท</th><th class="num">ทะเบียน</th>' +
+      '<th class="num">นับเจอ</th><th class="num">ยังไม่เจอ</th>' +
+      '<th class="c-md num">พบ (รายชิ้น)</th><th class="c-md num">ไม่พบ</th>' +
+      '<th class="c-md num">ยังไม่ตรวจ</th>' +
+      '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>' +
+      '<p class="hint">ยอดนับเป็นการนับรวมของหน้างานที่ไม่ทราบรหัส — แยกจากผลตรวจรายชิ้นโดยสิ้นเชิง</p></div>';
   }
 
   // ── Export Excel ───────────────────────────────────────────────────────────
@@ -2841,6 +3257,7 @@ const App = (() => {
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
     cell.border = BORDER;
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill || 'FFEDF1F7' } };
+    return cell;
   }
   /** สร้างชีทฟอร์มรายงาน (โครงเดียวกับไฟล์ .xls ต้นฉบับ + คอลัมน์เสริมท้ายตาราง) */
   function buildFormSheet(wb, s, opts) {
@@ -3127,6 +3544,50 @@ const App = (() => {
           });
         });
       hist.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: histHead.length } };
+
+      // ══ ชีท 6: นับจำนวนตามหมวด (เฉพาะเมื่อมีการนับ) ══
+      const countsAll = allCounts();
+      if (countsAll.length) {
+        const cnt = wb.addWorksheet('นับจำนวนตามหมวด', { views: [{ state: 'frozen', ySplit: 1 }] });
+        const cHead = ['หมวด', 'ประเภท', 'ทะเบียน (ชิ้น)', 'นับเจอ (ชิ้น)', 'ยังไม่เจอ',
+          'พบ (รายชิ้น)', 'ไม่พบ', 'ย้ายออก', 'ยังไม่ตรวจ', 'จำนวนครั้งที่นับ'];
+        [12, 12, 14, 14, 12, 14, 10, 10, 13, 15]
+          .forEach((w, i) => { cnt.getColumn(i + 1).width = w; });
+        cHead.forEach((h, i) => { styleHeadCell(cnt.getCell(1, i + 1)).value = h; });
+        let cr = 2;
+        ['FIXED', 'RENTAL'].forEach((t) => {
+          countSummary(t).filter((g) => g.entries > 0).forEach((g) => {
+            [['RT-' + g.cat, t === 'RENTAL' ? 'ของเช่า' : 'Fixed', g.total, g.counted,
+              g.total - g.counted, g.found, g.notfound, g.moved, g.pending, g.entries]][0]
+              .forEach((v, c) => {
+                const cell = cnt.getCell(cr, c + 1);
+                cell.value = v;
+                cell.font = { name: 'Tahoma', size: 10, bold: c === 3 };
+                cell.border = BORDER;
+                if (c >= 2) cell.alignment = { horizontal: 'center' };
+              });
+            cr++;
+          });
+        });
+        cr += 1;
+        cnt.getCell(cr, 1).value = 'รายละเอียดการนับแต่ละครั้ง';
+        cnt.getCell(cr, 1).font = { name: 'Tahoma', size: 11, bold: true };
+        cr++;
+        const dHead = ['เวลาที่นับ', 'หมวด', 'ประเภท', 'จำนวน (ชิ้น)', 'จุดที่นับ', 'ผู้นับ', 'หมายเหตุ'];
+        dHead.forEach((h, i) => { styleHeadCell(cnt.getCell(cr, i + 1)).value = h; });
+        countsAll.slice().sort((a, b) => String(a.countedAt).localeCompare(String(b.countedAt)))
+          .forEach((c, i) => {
+            [thaiDT(c.countedAt), 'RT-' + c.categoryCode,
+              c.assetType === 'RENTAL' ? 'ของเช่า' : 'Fixed', Number(c.counted) || 0,
+              c.locationText || '', c.inspector || '', c.note || ''
+            ].forEach((v, col) => {
+              const cell = cnt.getCell(cr + 1 + i, col + 1);
+              cell.value = v === '' ? null : v;
+              cell.font = { name: 'Tahoma', size: 9 };
+              cell.border = BORDER;
+            });
+          });
+      }
 
       busy('กำลังบันทึกไฟล์...');
       const buf = await wb.xlsx.writeBuffer();
@@ -3425,7 +3886,14 @@ const App = (() => {
     setInterval(() => {
       if (state.profile && navigator.onLine && !document.hidden) refreshAll(true);
     }, 120000);
+    el('colPanel').addEventListener('click', (ev) => ev.stopPropagation());
+    el('actList').addEventListener('click', (ev) => ev.stopPropagation());
     applyTheme(cacheGet('avTheme') || 'porcelain');
+    // คอลัมน์ที่ผู้ใช้เลือกไว้เอง (ต่อประเภททรัพย์สิน)
+    ['FIXED', 'RENTAL'].forEach((t) => {
+      const saved = cacheGet('avCols_' + t);
+      if (Array.isArray(saved)) state.ui.cols[t] = saved;
+    });
     hydrateIcons();
     enhanceAllSelects();
     const savedView = cacheGet('avView');
@@ -3441,6 +3909,9 @@ const App = (() => {
     setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession,
     readMasterFile, confirmImport, cancelImport,
     setType, setView, setSearch, setCat, setStaff, setSort, setStatus,
+    toggleColPicker, closeColPicker, toggleCol, pickAllCols, resetCols,
+    openCountSheet, closeCount, setCountCat, adjustCount, saveCountEntry, deleteCountEntry,
+    setActWho, setActResult, setActRange, setActSort, setActSearch,
     clearSelection, applySelection, quickSave, deleteSelectedHistory, setTheme,
     openAsset, closeRecord, chooseResult, saveRecord,
     addPhotos, removePhoto, viewPhoto, deleteLogEntry,

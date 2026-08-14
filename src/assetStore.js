@@ -275,6 +275,39 @@ const AssetStore = (function () {
     }
     return { deleted: deleted };
   }
+  // ── นับจำนวนตามหมวด (asset-counts.sql) ─────────────────────────────────────
+  const NO_COUNT_TABLE = /relation .*asset_count_log.* does not exist|schema cache/i;
+  /** ยอดนับของรอบ — ถ้ายังไม่ได้รัน asset-counts.sql ให้ถือว่ายังไม่มียอดนับ */
+  async function loadCounts(sessionId) {
+    if (!sessionId) return [];
+    try {
+      return await fetchPaged('asset_count_log', '*', 'counted_at', false,
+        (q) => q.eq('session_id', sessionId));
+    } catch (e) {
+      if (NO_COUNT_TABLE.test(e.message || '')) return [];
+      throw e;
+    }
+  }
+  async function saveCount(rec) {
+    const { data, error } = await getClient().from('asset_count_log')
+      .insert(objToRow(rec)).select().maybeSingle();
+    if (error) {
+      if (error.code === '23505' || /duplicate key/i.test(error.message || '')) {
+        return { duplicate: true };
+      }
+      if (NO_COUNT_TABLE.test(error.message || '')) {
+        throw new Error('ยังไม่ได้ติดตั้งโหมดนับจำนวน — รันไฟล์ asset-counts.sql ใน Supabase SQL Editor ก่อน');
+      }
+      throw new Error(error.message);
+    }
+    return rowToObj(data);
+  }
+  async function deleteCount(countId) {
+    const { error } = await getClient().from('asset_count_log')
+      .delete().eq('count_id', countId);
+    fail(error);
+    return { success: true };
+  }
   /** รับผลตรวจใหม่จากเครื่องอื่นแบบสด เฉพาะรอบที่กำลังเปิดอยู่ */
   function subscribeLogs(sessionId, onInsert, onStatus) {
     const ch = getClient().channel('asset-verify-' + (sessionId || 'all'))
@@ -325,6 +358,7 @@ const AssetStore = (function () {
     listSessions, createSession, updateSession, deleteSession,
     loadMaster, importAssets,
     loadLogs, loadLogsSummary, saveVerify, deleteLog, deleteLogsFor, subscribeLogs, unsubscribe,
+    loadCounts, saveCount, deleteCount,
     uploadPhoto, photoUrls, downloadPhoto
   };
 })();
