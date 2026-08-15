@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.6.0';
+  const APP_VERSION = 'v2.6.1';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -3601,10 +3601,28 @@ const App = (() => {
     const L = window.L;
     const map = L.map(box, { scrollWheelZoom: false });
     state.leaf = map;
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // ── ชั้นแผนที่: ถนน / ภาพดาวเทียม / ดาวเทียม+ชื่อสถานที่ ──
+    const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; ผู้ร่วมสร้าง <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(map);
+    });
+    const sat = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19, attribution: 'ภาพดาวเทียม: Esri, Maxar, Earthstar Geographics'
+      });
+    const labels = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19 });
+    const satLabeled = L.layerGroup([
+      L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+          maxZoom: 19, attribution: 'ภาพดาวเทียม: Esri, Maxar, Earthstar Geographics'
+        }), labels]);
+    const bases = { 'แผนที่ถนน': street, 'ภาพดาวเทียม': sat, 'ดาวเทียม + ชื่อสถานที่': satLabeled };
+    const savedBase = cacheGet('avMapBase');
+    (bases[savedBase] || street).addTo(map);
+    L.control.layers(bases, null, { position: 'topright' }).addTo(map);
+    map.on('baselayerchange', (ev) => cacheSet('avMapBase', ev.name));
     drawMapMarkers();
   }
   function drawMapMarkers() {
@@ -3636,7 +3654,10 @@ const App = (() => {
         (a && (a.location || '').trim() ? '<br>พื้นที่ทะเบียน: ' + esc(a.location) : '') +
         (l.note ? '<br>' + esc(l.note) : '') +
         (l.gpsAccuracy ? '<br><small>ความแม่นยำ ±' + Math.round(l.gpsAccuracy) + ' ม.</small>' : '') +
-        ((l.photoPaths || []).length ? '<br><small>มีรูป ' + l.photoPaths.length + ' รูป</small>' : '')
+        ((l.photoPaths || []).length ? '<br><small>มีรูป ' + l.photoPaths.length + ' รูป</small>' : '') +
+        '<br><a class="gmap-link" target="_blank" rel="noopener" ' +
+          'href="https://www.google.com/maps/search/?api=1&query=' + lat + ',' + lng + '">' +
+          'เปิดใน Google Maps ↗</a>'
       );
       group.addLayer(marker);
     });

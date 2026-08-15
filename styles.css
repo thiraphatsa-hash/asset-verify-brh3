@@ -987,6 +987,12 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
   border: 1px solid var(--line); background: var(--surface-2); z-index: 0;
 }
 .gps-map .leaflet-popup-content { font-family: inherit; font-size: 13px; line-height: 1.6; }
+.gmap-link {
+  display: inline-block; margin-top: 6px; padding: 5px 10px; border-radius: var(--r-sm);
+  background: var(--accent); color: var(--on-accent) !important; font-weight: 600;
+  text-decoration: none; font-size: 12.5px;
+}
+.gps-map .leaflet-control-layers { font-family: inherit; font-size: 13px; }
 .gps-map .leaflet-container { font-family: inherit; }
 .map-legend {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 9px; font-size: 12.5px;
