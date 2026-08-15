@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.5.1';
+  const APP_VERSION = 'v2.6.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -192,6 +192,10 @@ const App = (() => {
       cols: { FIXED: null, RENTAL: null }        // null = อัตโนมัติตามขนาดจอ
     },
     act: { who: '', result: '', range: '', q: '', sort: 'new' },   // หน้าประวัติการบันทึก
+    map: { who: '', range: '', area: '' },                         // ตัวกรองแผนที่ใน Dashboard
+    geo: null,
+    geoWatch: null,
+    leaf: null,                                                    // Leaflet map instance
     count: { cat: '', n: 1 },
     rec: null,
     accessSeen: {},
@@ -271,11 +275,24 @@ const App = (() => {
   const LIBS = {
     xlsx: { url: 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', global: 'XLSX' },
     exceljs: { url: 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js', global: 'ExcelJS' },
-    zxing: { url: 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js', global: 'ZXing' }
+    zxing: { url: 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js', global: 'ZXing' },
+    leaflet: {
+      url: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js', global: 'L',
+      css: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css'
+    }
   };
+  function ensureCss(url) {
+    if (document.querySelector('link[data-lib="' + url + '"]')) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = url;
+    link.setAttribute('data-lib', url);
+    document.head.appendChild(link);
+  }
   const libLoading = {};
   function ensureLibrary(name) {
     const lib = LIBS[name];
+    if (lib.css) ensureCss(lib.css);
     if (window[lib.global]) return Promise.resolve();
     if (libLoading[name]) return libLoading[name];
     libLoading[name] = new Promise((resolve, reject) => {
@@ -718,6 +735,7 @@ const App = (() => {
   }
   async function logout() {
     if (state.pendTimer) { clearInterval(state.pendTimer); state.pendTimer = null; }
+    stopGeoWatch();
     await AssetStore.signOut();
     location.reload();
   }
@@ -959,6 +977,7 @@ const App = (() => {
     state.master = cacheGet('avMaster_' + id) || [];
     state.logs = cacheGet('avLogs_' + id) || [];
     state.counts = cacheGet('avCounts_' + id) || [];
+    startGeoWatch();                    // เก็บพิกัดล่าสุดไว้ให้ทุกวิธีบันทึกใช้ร่วมกัน
     afterDataChange();
     go(target || 'list');
     try {
@@ -1815,7 +1834,7 @@ const App = (() => {
       if (pieceNo === null) continue;
       await queueRecord({
         inventoryNumber: invs[i], assetType: asset.assetType, pieceNo: pieceNo,
-        resultKey: resultKey, method: 'MANUAL', locationText: location
+        resultKey: resultKey, method: 'MANUAL', locationText: location, gps: currentGeo()
       });
       n++;
     }
@@ -1834,7 +1853,8 @@ const App = (() => {
     await queueRecord({
       inventoryNumber: inv, assetType: asset.assetType, resultKey: resultKey, method: 'MANUAL',
       pieceNo: pieceNo,
-      locationText: (el('bulkBarLocation').value || cacheGet('avLastLocation') || '').trim()
+      locationText: (el('bulkBarLocation').value || cacheGet('avLastLocation') || '').trim(),
+      gps: currentGeo()
     });
     beep();
     afterDataChange();
@@ -2080,8 +2100,40 @@ const App = (() => {
     });
     el('movedFields').classList.toggle('hidden', key !== 'MOVED');
   }
+  // ── พิกัด GPS ที่เครื่องจับได้ล่าสุด ────────────────────────────────────────
+  // เปิดค้างไว้ตอนทำงานในรอบตรวจ เพื่อให้ทุกวิธีบันทึก (ติ๊ก Yes/No · เลือกหลายรายการ ·
+  // โหมดต่อเนื่อง) แนบพิกัดได้ทันทีโดยไม่ต้องรอ getCurrentPosition ทีละครั้ง
+  const GEO_MAX_AGE = 5 * 60 * 1000;          // เก่ากว่า 5 นาทีถือว่าใช้ไม่ได้แล้ว
+  function startGeoWatch() {
+    if (state.geoWatch != null || !navigator.geolocation) return;
+    try {
+      state.geoWatch = navigator.geolocation.watchPosition((pos) => {
+        state.geo = {
+          lat: pos.coords.latitude, lng: pos.coords.longitude,
+          acc: Math.round(pos.coords.accuracy || 0), at: Date.now()
+        };
+      }, () => {}, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+    } catch (e) { state.geoWatch = null; }
+  }
+  function stopGeoWatch() {
+    if (state.geoWatch == null) return;
+    try { navigator.geolocation.clearWatch(state.geoWatch); } catch (e) {}
+    state.geoWatch = null;
+  }
+  /** พิกัดล่าสุดถ้ายังสดพอ — ไม่หน่วงการบันทึกเลย */
+  function currentGeo() {
+    const g = state.geo;
+    if (!g || Date.now() - g.at > GEO_MAX_AGE) return null;
+    return { lat: g.lat, lng: g.lng, acc: g.acc };
+  }
   function startGps() {
     if (!state.rec) return;
+    const cached = currentGeo();
+    if (cached) {                              // มีพิกัดอยู่แล้ว ใช้ไปก่อนระหว่างรอตัวแม่นกว่า
+      state.rec.gps = cached;
+      el('gpsLine').innerHTML = icon('pin') + ' ใช้พิกัดล่าสุด (±' + cached.acc + ' ม.) กำลังอัปเดต...';
+      el('gpsLine').className = 'gps-line ok';
+    }
     if (!navigator.geolocation) {
       el('gpsLine').innerHTML = icon('pin') + ' เครื่องนี้ไม่รองรับ GPS (ข้ามได้ ไม่บังคับ)';
       return;
@@ -2093,6 +2145,7 @@ const App = (() => {
         lat: pos.coords.latitude, lng: pos.coords.longitude,
         acc: Math.round(pos.coords.accuracy || 0)
       };
+      state.geo = { lat: rec.gps.lat, lng: rec.gps.lng, acc: rec.gps.acc, at: Date.now() };
       el('gpsLine').innerHTML = icon('pin') + ' ได้พิกัดแล้ว (±' + rec.gps.acc + ' ม.)';
       el('gpsLine').className = 'gps-line ok';
     }, () => {
@@ -2953,7 +3006,8 @@ const App = (() => {
     try {
       await queueRecord({
         inventoryNumber: code, assetType: asset.assetType, pieceNo: pieceNo,
-        resultKey: state.bulk.resultKey, method: 'MANUAL', locationText: location
+        resultKey: state.bulk.resultKey, method: 'MANUAL', locationText: location,
+        gps: currentGeo()
       });
     } catch (e) {
       return toast('บันทึกลงเครื่องไม่ได้: ' + e.message, 'error');
@@ -3451,17 +3505,153 @@ const App = (() => {
           '<th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>ผล</th><th class="c-md">ผู้ตรวจ</th>' +
           '<th class="c-md">เวลา</th></tr></thead><tbody>' + recent + '</tbody></table></div>'
           : '<p class="hint">ยังไม่มีการตรวจในรอบนี้</p>') + '</div>' +
+      mapCard() +
       countCompareCard() +
       dashList('pf', icon('square') + ' ยังไม่ตรวจ — Fixed Assets', pendF.map(pendingRow)) +
       dashList('pr', icon('square') + ' ยังไม่ตรวจ — ของเช่า', pendR.map(pendingRow)) +
       dashList('nf', icon('close') + ' ไม่พบ', notFound) +
       dashList('mv', icon('truck') + ' ย้ายออกไปไซต์อื่น', moved) +
       dashList('un', icon('plus') + ' ทรัพย์สินนอกทะเบียน', unl);
+    initMap();
   }
   function toggleSection(id) {
     const b = el('coll-' + id);
     if (b) b.classList.toggle('hidden');
   }
+
+  // ── แผนที่จุดที่บันทึก (OpenStreetMap + Leaflet) ────────────────────────────
+  const RESULT_PIN = {
+    found: { color: '#2F7D5B', label: 'พบ' },
+    notfound: { color: '#B0402F', label: 'ไม่พบ' },
+    moved: { color: '#1B3A6B', label: 'ย้ายออก' }
+  };
+  function gpsLogs() {
+    return allLogs().filter((l) => l.gpsLat != null && l.gpsLng != null &&
+      !isNaN(Number(l.gpsLat)) && !isNaN(Number(l.gpsLng)));
+  }
+  /** ใช้ตัวกรองของแผนที่กับรายการที่มีพิกัด */
+  function mapLogs() {
+    const f = state.map;
+    let rows = gpsLogs();
+    if (f.who) rows = rows.filter((l) => (l.inspector || '') === f.who);
+    if (f.range) {
+      const now = Date.now();
+      rows = rows.filter((l) => (f.range === 'today'
+        ? new Date(l.verifiedAt).toDateString() === new Date().toDateString()
+        : now - new Date(l.verifiedAt).getTime() <= Number(f.range) * 86400000));
+    }
+    if (f.area) {
+      rows = rows.filter((l) => {
+        const a = state.master.find((x) => x.inventoryNumber === l.inventoryNumber);
+        const v = a ? (a.location || '').trim() : '';
+        return f.area === '__NONE__' ? !v : v === f.area;
+      });
+    }
+    return rows;
+  }
+  function mapCard() {
+    const all = gpsLogs();
+    const total = allLogs().length;
+    const people = Array.from(new Set(gpsLogs().map((l) => l.inspector).filter(Boolean))).sort();
+    const areas = Array.from(new Set(state.master.map((a) => (a.location || '').trim())
+      .filter(Boolean))).sort((a, b) => a.localeCompare(b, 'th'));
+    const legend = Object.keys(RESULT_PIN).map((k) =>
+      '<span class="map-leg"><i style="background:' + RESULT_PIN[k].color + '"></i>' +
+      RESULT_PIN[k].label + '</span>').join('');
+    return '<div class="dash-card wide"><h4>' + icon('pin') + ' แผนที่จุดที่บันทึก</h4>' +
+      (all.length
+        ? '<div class="map-tools">' +
+            '<select id="mapWho" class="filter-select" onchange="App.setMapWho(this.value)">' +
+              '<option value="">ผู้บันทึก: ทุกคน</option>' +
+              people.map((p) => '<option value="' + esc(p) + '"' +
+                (state.map.who === p ? ' selected' : '') + '>' + esc(p) + '</option>').join('') +
+            '</select>' +
+            '<select id="mapRange" class="filter-select" onchange="App.setMapRange(this.value)">' +
+              [['', 'ช่วงเวลา: ทั้งหมด'], ['today', 'วันนี้'], ['1', '24 ชั่วโมงล่าสุด'], ['7', '7 วันล่าสุด']]
+                .map((o) => '<option value="' + o[0] + '"' +
+                  (state.map.range === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+            '</select>' +
+            (areas.length ? '<select id="mapArea" class="filter-select" onchange="App.setMapArea(this.value)">' +
+              '<option value="">พื้นที่: ทั้งหมด</option>' +
+              '<option value="__NONE__"' + (state.map.area === '__NONE__' ? ' selected' : '') +
+                '>(ไม่ระบุพื้นที่)</option>' +
+              areas.map((v) => '<option value="' + esc(v) + '"' +
+                (state.map.area === v ? ' selected' : '') + '>' + esc(v) + '</option>').join('') +
+            '</select>' : '') +
+            '<span id="mapCount" class="count-pill"></span>' +
+          '</div>' +
+          '<div id="gpsMap" class="gps-map"></div>' +
+          '<div class="map-legend">' + legend +
+            '<span class="hint">มีพิกัด ' + all.length + ' จาก ' + total + ' การบันทึก</span></div>'
+        : '<p class="hint">ยังไม่มีการบันทึกที่มีพิกัด GPS ในรอบนี้ — ' +
+          'พิกัดจะติดมาเองเมื่อผู้ตรวจอนุญาตให้เว็บใช้ตำแหน่ง (ทุกวิธีบันทึก)</p>') +
+      '</div>';
+  }
+  /** สร้าง/รีเฟรชแผนที่หลังจาก Dashboard วาดเสร็จ (Leaflet โหลดจากเน็ตครั้งแรกครั้งเดียว) */
+  async function initMap() {
+    const box = el('gpsMap');
+    if (!box) { state.leaf = null; return; }
+    try {
+      await ensureLibrary('leaflet');
+    } catch (e) {
+      box.innerHTML = '<p class="hint">เปิดแผนที่ไม่ได้ (ต้องต่ออินเทอร์เน็ตครั้งแรกที่ใช้)</p>';
+      return;
+    }
+    if (state.leaf) { try { state.leaf.remove(); } catch (e) {} state.leaf = null; }
+    const L = window.L;
+    const map = L.map(box, { scrollWheelZoom: false });
+    state.leaf = map;
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; ผู้ร่วมสร้าง <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+    drawMapMarkers();
+  }
+  function drawMapMarkers() {
+    const map = state.leaf;
+    if (!map || !window.L) return;
+    const L = window.L;
+    if (state.mapLayer) { try { map.removeLayer(state.mapLayer); } catch (e) {} }
+    const rows = mapLogs();
+    if (el('mapCount')) el('mapCount').textContent = rows.length + ' จุด';
+    const group = L.layerGroup();
+    const pts = [];
+    rows.forEach((l) => {
+      const cls = classify(l);
+      const pin = RESULT_PIN[cls] || { color: '#6B7280' };
+      const lat = Number(l.gpsLat);
+      const lng = Number(l.gpsLng);
+      pts.push([lat, lng]);
+      const a = state.master.find((x) => x.inventoryNumber === l.inventoryNumber);
+      const marker = L.circleMarker([lat, lng], {
+        radius: 8, color: '#fff', weight: 2, fillColor: pin.color, fillOpacity: 0.95
+      });
+      marker.bindPopup(
+        '<b class="mono">' + esc(l.inventoryNumber) + '</b><br>' +
+        esc(a ? (a.description || '') : (l.unlistedDesc || 'นอกทะเบียน')) + '<br>' +
+        '<b style="color:' + pin.color + '">' + esc(statusLabel(l)) + '</b>' +
+        (Number(l.pieceNo) > 1 ? ' · ชิ้นที่ ' + l.pieceNo : '') + '<br>' +
+        esc(l.inspector || '-') + '<br>' + esc(thaiDT(l.verifiedAt)) +
+        (l.locationText ? '<br>📍 ' + esc(l.locationText) : '') +
+        (a && (a.location || '').trim() ? '<br>พื้นที่ทะเบียน: ' + esc(a.location) : '') +
+        (l.note ? '<br>' + esc(l.note) : '') +
+        (l.gpsAccuracy ? '<br><small>ความแม่นยำ ±' + Math.round(l.gpsAccuracy) + ' ม.</small>' : '') +
+        ((l.photoPaths || []).length ? '<br><small>มีรูป ' + l.photoPaths.length + ' รูป</small>' : '')
+      );
+      group.addLayer(marker);
+    });
+    group.addTo(map);
+    state.mapLayer = group;
+    if (pts.length) {
+      map.fitBounds(L.latLngBounds(pts).pad(0.25), { maxZoom: 18 });
+    } else {
+      map.setView([13.7563, 100.5018], 6);        // ไม่มีจุดตามตัวกรอง — ถอยมาดูภาพรวมประเทศ
+    }
+    setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 120);
+  }
+  function setMapWho(v) { state.map.who = v; drawMapMarkers(); }
+  function setMapRange(v) { state.map.range = v; drawMapMarkers(); }
+  function setMapArea(v) { state.map.area = v; drawMapMarkers(); }
   /** การ์ดเทียบยอด "ทะเบียน ↔ นับเจอจริง" รายหมวด (เฉพาะหมวดที่มีการนับ) */
   function countCompareCard() {
     const rows = [];
@@ -4173,6 +4363,7 @@ const App = (() => {
     readMasterFile, confirmImport, cancelImport,
     setType, setView, setSearch, setCat, setStaff, setArea, setSort, setStatus, setSelectedArea,
     openQueuePanel, closeQueuePanel, retryQueue, dropQueueItem, dropAllQueue, setCountCustom,
+    setMapWho, setMapRange, setMapArea,
     toggleColPicker, closeColPicker, toggleCol, pickAllCols, resetCols,
     openCountSheet, closeCount, setCountCat, adjustCount, saveCountEntry, deleteCountEntry,
     setActWho, setActResult, setActRange, setActSort, setActSearch,

@@ -979,6 +979,23 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 }
 .count-row small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 
+/* ── แผนที่จุดที่บันทึก (Leaflet) ────────────────────────────────────────── */
+.map-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.map-tools .filter-select, .map-tools .combo { min-width: 150px; }
+.gps-map {
+  height: 380px; width: 100%; border-radius: var(--r); overflow: hidden;
+  border: 1px solid var(--line); background: var(--surface-2); z-index: 0;
+}
+.gps-map .leaflet-popup-content { font-family: inherit; font-size: 13px; line-height: 1.6; }
+.gps-map .leaflet-container { font-family: inherit; }
+.map-legend {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 9px; font-size: 12.5px;
+}
+.map-leg { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.map-leg i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.map-legend .hint { margin: 0 0 0 auto; }
+@media (max-width: 700px) { .gps-map { height: 300px; } }
+
 /* ── รายการค้างส่ง ──────────────────────────────────────────────────────── */
 .queue-list { display: flex; flex-direction: column; gap: 7px; }
 .q-row {
