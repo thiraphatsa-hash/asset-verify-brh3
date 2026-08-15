@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.6.1';
+  const APP_VERSION = 'v2.7.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -1664,7 +1664,11 @@ const App = (() => {
           (latest ? '<div class="asset-meta">' + icon('clock') + ' ' + esc(thaiDT(latest.verifiedAt)) + ' · ' +
             esc(latest.inspector || '') + ' · ' + latest.method +
             (latest.locationText ? ' · ' + icon('pin') + ' ' + esc(latest.locationText) : '') +
-            (latest.pending ? ' · <b class="pending-sync">รอส่ง</b>' : '') + '</div>' : '') +
+            (latest.pending ? ' · <b class="pending-sync">รอส่ง</b>' : '') +
+            (photoCountOf(latest)
+              ? ' <button type="button" class="photo-chip" data-log="' + esc(latest.logId) + '">' +
+                icon('camera') + ' ดูรูป (' + photoCountOf(latest) + ')</button>'
+              : '') + '</div>' : '') +
           '</div>';
       }).join('') || '<p class="empty-note">ไม่พบรายการตามเงื่อนไข</p>';
     }
@@ -1992,9 +1996,14 @@ const App = (() => {
         (l.moveDate ? '<span>ส่งวันที่ ' + esc(thaiD(l.moveDate)) + '</span>' : '') +
         (l.note ? '<span>' + icon('note') + ' ' + esc(l.note) + '</span>' : '') +
         photos.map((p, i) =>
-          '<a href="#" class="photo-link" data-path="' + esc(p) + '">' + icon('camera') + ' รูป ' + (i + 1) + '</a>').join('') +
+          '<button type="button" class="photo-link" data-log="' + esc(l.logId) + '" data-i="' + i + '">' +
+          icon('camera') + ' รูป ' + (i + 1) + '</button>').join('') +
         (l.pending ? '<span class="pending-sync">' + icon('clock') + ' รอส่ง' +
           (l.photoCount ? ' (' + l.photoCount + ' รูป)' : '') + '</span>' : '') +
+        (l.pending && l.photoCount
+          ? '<button type="button" class="photo-link" data-log="' + esc(l.logId) + '" data-i="0">' +
+            icon('camera') + ' ดูรูป (' + l.photoCount + ')</button>'
+          : '') +
         (canEditLog(l)
           ? '<button type="button" class="hist-del" data-log="' + esc(l.logId) + '" title="ลบรายการนี้">' + icon('trash') + '</button>'
           : '') +
@@ -2221,6 +2230,62 @@ const App = (() => {
       if (urls[path]) window.open(urls[path], '_blank');
       else toast('เปิดรูปไม่ได้', 'error');
     } catch (e) { busyHide(); toast(e.message, 'error'); }
+  }
+  // ── ดูรูปที่ถ่ายไว้ (เปิดในแอปเลย ไม่ต้องเด้งแท็บใหม่) ──────────────────────
+  /** จำนวนรูปของ record นั้น (ทั้งที่ส่งแล้วและที่ยังค้างส่งอยู่ในเครื่อง) */
+  function photoCountOf(l) {
+    return (l.photoPaths || []).length || l.photoCount || 0;
+  }
+  async function openPhotos(logId, startAt) {
+    const l = allLogs().find((x) => String(x.logId) === String(logId));
+    if (!l) return;
+    let items = [];
+    if (l.pending) {
+      // ยังไม่ได้ส่งขึ้นเซิร์ฟเวอร์ — รูปอยู่ในคิวเป็น dataUrl
+      const q = state.queueItems.find((x) => x.clientId === l.clientId);
+      items = ((q && q.photos) || []).map((p) => p.dataUrl).filter(Boolean);
+    } else {
+      const paths = l.photoPaths || [];
+      if (!paths.length) return toast('รายการนี้ไม่มีรูป', 'warn');
+      try {
+        busy('กำลังเปิดรูป...');
+        const urls = await AssetStore.photoUrls(paths);
+        items = paths.map((p) => urls[p]).filter(Boolean);
+      } catch (e) {
+        busyHide();
+        return toast('เปิดรูปไม่ได้: ' + e.message, 'error');
+      } finally { busyHide(); }
+    }
+    if (!items.length) return toast('เปิดรูปไม่ได้ (อาจถูกลบไปแล้ว)', 'warn');
+    const asset = state.master.find((a) => a.inventoryNumber === l.inventoryNumber);
+    state.photos = { items: items, i: Math.min(startAt || 0, items.length - 1), log: l };
+    el('photoTitle').textContent = l.inventoryNumber;
+    el('photoSub').textContent = (asset ? (asset.description || '') + ' · ' : '') +
+      statusLabel(l) + ' · ' + (l.inspector || '') + ' · ' + thaiDT(l.verifiedAt) +
+      (l.pending ? ' · ยังไม่ได้ส่ง' : '');
+    renderPhotoView();
+    el('photoModal').classList.remove('hidden');
+  }
+  function renderPhotoView() {
+    const p = state.photos;
+    if (!p) return;
+    el('photoImg').src = p.items[p.i];
+    el('photoCount').textContent = (p.i + 1) + ' / ' + p.items.length;
+    el('photoPrev').classList.toggle('hidden', p.items.length < 2);
+    el('photoNext').classList.toggle('hidden', p.items.length < 2);
+    const open = el('photoOpen');
+    open.href = p.items[p.i];
+  }
+  function photoNav(delta) {
+    const p = state.photos;
+    if (!p) return;
+    p.i = (p.i + delta + p.items.length) % p.items.length;
+    renderPhotoView();
+  }
+  function closePhotos() {
+    state.photos = null;
+    el('photoImg').src = '';
+    el('photoModal').classList.add('hidden');
   }
   async function saveRecord() {
     const rec = state.rec;
@@ -3284,6 +3349,9 @@ const App = (() => {
             (l.note ? ' · ' + esc(l.note) : '') + '</div>' +
         '</div>' +
         '<div class="act-actions">' +
+          (photoCountOf(l) ? '<button class="qbtn photo" type="button" title="ดูรูปที่ถ่ายไว้" ' +
+            'onclick="App.openPhotos(\'' + esc(l.logId) + '\')">' + icon('camera') +
+            '<b class="ph-n">' + photoCountOf(l) + '</b></button>' : '') +
           (asset ? '<button class="qbtn" type="button" title="เปิดแก้ไข/บันทึกใหม่" ' +
             'onclick="App.openAsset(\'' + esc(l.inventoryNumber) + '\')">' + icon('edit') + '</button>' : '') +
           (editable ? '<button class="qbtn del" type="button" title="ลบรายการที่บันทึกผิด" ' +
@@ -3654,8 +3722,12 @@ const App = (() => {
         (a && (a.location || '').trim() ? '<br>พื้นที่ทะเบียน: ' + esc(a.location) : '') +
         (l.note ? '<br>' + esc(l.note) : '') +
         (l.gpsAccuracy ? '<br><small>ความแม่นยำ ±' + Math.round(l.gpsAccuracy) + ' ม.</small>' : '') +
-        ((l.photoPaths || []).length ? '<br><small>มีรูป ' + l.photoPaths.length + ' รูป</small>' : '') +
-        '<br><a class="gmap-link" target="_blank" rel="noopener" ' +
+        '<br>' +
+        (photoCountOf(l)
+          ? '<button type="button" class="pop-btn photo" onclick="App.openPhotos(\'' +
+            esc(l.logId) + '\')">ดูรูป (' + photoCountOf(l) + ')</button>'
+          : '') +
+        '<a class="gmap-link" target="_blank" rel="noopener" ' +
           'href="https://www.google.com/maps/search/?api=1&query=' + lat + ',' + lng + '">' +
           'เปิดใน Google Maps ↗</a>'
       );
@@ -4331,6 +4403,8 @@ const App = (() => {
       if (ev.target.id === 'checkAll') selectAllFiltered(ev.target.checked);
     });
     el('cardWrap').addEventListener('click', (ev) => {
+      const ph = ev.target.closest('.photo-chip');
+      if (ph) { ev.stopPropagation(); return openPhotos(ph.dataset.log); }
       const row = ev.target.closest('.asset-row');
       if (row) openAsset(row.dataset.inv);
     });
@@ -4347,7 +4421,10 @@ const App = (() => {
     el('bulkCatPanel').addEventListener('click', (ev) => ev.stopPropagation());
     el('recHistory').addEventListener('click', (ev) => {
       const link = ev.target.closest('.photo-link');
-      if (link) { ev.preventDefault(); return viewPhoto(link.dataset.path); }
+      if (link) {
+        ev.preventDefault();
+        return openPhotos(link.dataset.log, Number(link.dataset.i) || 0);
+      }
       const del = ev.target.closest('.hist-del');
       if (del) deleteLogEntry(del.dataset.log);
     });
@@ -4390,7 +4467,7 @@ const App = (() => {
     setActWho, setActResult, setActRange, setActSort, setActSearch,
     clearSelection, applySelection, quickSave, deleteSelectedHistory, setTheme,
     openAsset, closeRecord, chooseResult, saveRecord,
-    addPhotos, removePhoto, viewPhoto, deleteLogEntry,
+    addPhotos, removePhoto, viewPhoto, openPhotos, photoNav, closePhotos, deleteLogEntry,
     openScanner, closeScanner, resumeScan, scanUnlisted, toggleTorch, scanFromPhoto,
     hideScanTips, dupChoose,
     openBulk, closeBulk, setBulkResult, bulkSubmit, pickChoose,
