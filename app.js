@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.7.0';
+  const APP_VERSION = 'v2.8.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -217,12 +217,17 @@ const App = (() => {
   const esc = (v) => String(v == null ? '' : v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  function toast(msg, kind) {
+  /** onClick = แตะที่ข้อความแล้วเปิดหน้าที่เกี่ยวข้องได้ (ใช้กับคำเตือนที่ต้องไปตรวจสอบต่อ) */
+  function toast(msg, kind, onClick, ms) {
     const box = document.createElement('div');
-    box.className = 'toast' + (kind ? ' ' + kind : '');
+    box.className = 'toast' + (kind ? ' ' + kind : '') + (onClick ? ' tappable' : '');
     box.textContent = msg;
+    if (onClick) {
+      box.setAttribute('role', 'button');
+      box.addEventListener('click', () => { box.remove(); try { onClick(); } catch (e) {} });
+    }
     el('toastContainer').appendChild(box);
-    setTimeout(() => { box.remove(); }, 3600);
+    setTimeout(() => { box.remove(); }, ms || 3600);
   }
   function busy(text) { el('busyText').textContent = text || 'กำลังดำเนินการ...'; el('busyOverlay').classList.remove('hidden'); }
   function busyHide() { el('busyOverlay').classList.add('hidden'); }
@@ -337,7 +342,12 @@ const App = (() => {
   function updateSyncChip() {
     const n = state.queueItems.length;
     el('syncCount').textContent = n;
-    el('syncChip').classList.toggle('hidden', n === 0);
+    const chip = el('syncChip');
+    chip.classList.toggle('hidden', n === 0);
+    // ส่งไม่ผ่านด้วยสาเหตุถาวร (สิทธิ์/ระบบยังไม่พร้อม) = ชิปเปลี่ยนเป็นสีแดง ไม่ใช่แค่ "รอส่ง"
+    const stuck = state.queueItems.some((q) => q.lastError && !isNetworkError(q.lastError));
+    chip.classList.toggle('stuck', stuck);
+    chip.title = stuck ? 'ส่งไม่สำเร็จ — แตะเพื่อดูสาเหตุ' : 'รายการที่รอส่ง';
     const net = el('netChip');
     net.className = 'net-chip ' + (navigator.onLine ? 'online' : 'offline');
     net.title = navigator.onLine ? 'ออนไลน์' : 'ออฟไลน์ — บันทึกได้ ระบบจะส่งให้เมื่อกลับมาออนไลน์';
@@ -347,6 +357,9 @@ const App = (() => {
     state.flushing = true;
     updateSyncChip();
     let sent = 0;
+    let stuck = 0;              // ส่งไม่ผ่านด้วยสาเหตุถาวร (ไม่ใช่เน็ตหลุด)
+    let stuckMsg = '';
+    let needRefresh = false;    // มีแถวที่เซิร์ฟเวอร์บอกว่า "มีอยู่แล้ว" → ดึงของจริงมาทับ
     try {
       const items = state.queueItems.slice();
       for (let i = 0; i < items.length; i++) {
@@ -362,6 +375,7 @@ const App = (() => {
             await qDel(it.clientId);
             state.queueItems = state.queueItems.filter((q) => q.clientId !== it.clientId);
             if (savedCount && savedCount.countId) addCountLocal(savedCount);
+            else { addCountLocal(sentCountFrom(it)); needRefresh = true; }
             sent++;
             continue;
           }
@@ -399,6 +413,9 @@ const App = (() => {
           await qDel(it.clientId);
           state.queueItems = state.queueItems.filter((q) => q.clientId !== it.clientId);
           if (saved && saved.logId) addLogLocal(saved);
+          // เซิร์ฟเวอร์บอกว่ามีแถวนี้อยู่แล้ว แต่ดึงกลับมาไม่ได้ → คงผลไว้บนจอก่อน
+          // (ถ้าปล่อยหาย ผู้ตรวจจะนึกว่าไม่ได้บันทึกแล้วเดินไปบันทึกซ้ำ)
+          else { addLogLocal(sentLogFrom(it)); needRefresh = true; }
           sent++;
         } catch (e) {
           it.lastError = e.message;
@@ -407,13 +424,49 @@ const App = (() => {
           // เน็ตหลุด = หยุดทั้งรอบไว้ส่งใหม่ทีหลัง · error ถาวร (เช่นยังไม่ได้รัน SQL,
           // สิทธิ์ไม่พอ, ข้อมูลผิดรูป) = ข้ามตัวนี้ไปส่งตัวอื่นต่อ ไม่ให้ค้างทั้งคิว
           if (isNetworkError(e.message)) break;
+          stuck++;
+          if (!stuckMsg) stuckMsg = e.message;
         }
       }
     } finally {
       state.flushing = false;
       updateSyncChip();
       if (sent) { afterDataChange(); toast('ส่งผลตรวจค้างส่งแล้ว ' + sent + ' รายการ', 'success'); }
+      // ห้ามเงียบ: ถ้าส่งไม่ผ่านเพราะสิทธิ์/ระบบยังไม่พร้อม ต้องรู้ทันทีตั้งแต่รายการแรก
+      if (stuck) {
+        afterDataChange();
+        toast('ส่งไม่สำเร็จ ' + stuck + ' รายการ — ' + shortErr(stuckMsg) + ' (แตะเพื่อดูรายละเอียด)',
+          'error', openQueuePanel, 9000);
+      }
+      if (needRefresh) refreshAll(true);
     }
+  }
+  /** แปลสาเหตุที่ส่งไม่ผ่านให้อ่านรู้เรื่องหน้างาน */
+  function shortErr(msg) {
+    const m = String(msg || '');
+    if (/row-level security|permission denied|not authorized|violates row/i.test(m)) {
+      return 'บัญชีไม่มีสิทธิ์บันทึกแล้ว — แจ้งผู้ดูแลระบบ';
+    }
+    if (/jwt|expired|invalid token|refresh_token/i.test(m)) return 'เซสชันหมดอายุ — ออกจากระบบแล้วเข้าใหม่';
+    if (/ยังไม่ได้ติดตั้ง|รันไฟล์|does not exist|schema cache/i.test(m)) return 'ระบบยังติดตั้งไม่ครบ';
+    return m.length > 55 ? m.slice(0, 55) + '…' : m;
+  }
+  /** แถวที่ถูกบันทึกไว้แล้วแต่เครื่องนี้ไม่ได้รับคำตอบ — ใช้แสดงบนจอชั่วคราวจนรีเฟรชได้ของจริง */
+  function sentLogFrom(it) {
+    const l = queueToLog(it);
+    l.logId = 'sent-' + it.clientId;
+    l.pending = false;
+    l.photoPaths = (it.photos || []).map((p) => p.path).filter(Boolean);
+    l.photoCount = l.photoPaths.length;
+    return l;
+  }
+  function sentCountFrom(it) {
+    return {
+      countId: 'sent-' + it.clientId, clientId: it.clientId, sessionId: it.sessionId,
+      site: it.site, assetType: it.assetType, categoryCode: it.categoryCode,
+      counted: it.counted, locationText: it.locationText, note: it.note,
+      inspector: it.inspector, countedAt: it.countedAt
+    };
   }
   function isNetworkError(msg) {
     return /failed to fetch|networkerror|network request failed|timeout|load failed|offline/i
@@ -532,8 +585,7 @@ const App = (() => {
     const map = new Map();
     const piecesSeen = new Map();      // inv → Set(pieceNo)
     allLogs().forEach((l) => {
-      const cur = map.get(l.inventoryNumber);
-      if (!cur || String(l.verifiedAt) >= String(cur.verifiedAt)) map.set(l.inventoryNumber, l);
+      if (isNewer(l, map.get(l.inventoryNumber))) map.set(l.inventoryNumber, l);
       const set = piecesSeen.get(l.inventoryNumber) || new Set();
       set.add(Number(l.pieceNo) > 0 ? Number(l.pieceNo) : 1);
       piecesSeen.set(l.inventoryNumber, set);
@@ -616,15 +668,31 @@ const App = (() => {
       (log.clientId && l.clientId === log.clientId));
     if (!dup) state.logs.push(log);
   }
+  /** เอาผลตรวจที่ถูกลบจากเครื่องอื่นออก — คืน true ถ้าเครื่องนี้ถืออยู่จริง */
+  function removeLogLocal(logId) {
+    if (!logId) return false;
+    const before = state.logs.length;
+    state.logs = state.logs.filter((l) => String(l.logId) !== String(logId));
+    state.logSummary = state.logSummary.filter((l) => String(l.logId) !== String(logId));
+    return state.logs.length !== before;
+  }
   // ── RT code ที่ใช้ซ้ำหลายชิ้น ────────────────────────────────────────────────
   /** รวม record ของ RT code หนึ่ง แล้วสรุปเป็น "ชิ้น" (piece) ตาม pieceNo */
+  /**
+   * ผลไหน "ใหม่กว่า" — ถ้าเวลาตรงกันเป๊ะ (สองเครื่องกดพร้อมกัน) ตัดสินด้วย logId
+   * เพื่อให้ทุกเครื่องสรุปสถานะตรงกัน ไม่ขึ้นกับว่า realtime มาถึงเครื่องไหนก่อน
+   */
+  function isNewer(l, cur) {
+    if (!cur) return true;
+    const a = String(l.verifiedAt), b = String(cur.verifiedAt);
+    return a !== b ? a > b : String(l.logId) > String(cur.logId);
+  }
   function piecesOf(inv) {
     const rows = allLogs().filter((l) => l.inventoryNumber === inv);
     const byPiece = new Map();
     rows.forEach((l) => {
       const p = Number(l.pieceNo) > 0 ? Number(l.pieceNo) : 1;
-      const cur = byPiece.get(p);
-      if (!cur || String(l.verifiedAt) >= String(cur.verifiedAt)) byPiece.set(p, l);
+      if (isNewer(l, byPiece.get(p))) byPiece.set(p, l);
     });
     return Array.from(byPiece.keys()).sort((a, b) => a - b).map((p) => byPiece.get(p));
   }
@@ -855,12 +923,75 @@ const App = (() => {
     if (!id) return;
     if (state.channel) { AssetStore.unsubscribe(state.channel); state.channel = null; }
     try {
-      state.channel = AssetStore.subscribeLogs(id, (log) => {
-        addLogLocal(log);
-        cacheSet('avLogs_' + id, state.logs);
-        afterDataChange();
+      state.channel = AssetStore.subscribeLogs(id, {
+        onInsert: (log) => {
+          warnIfClash(log);
+          addLogLocal(log);
+          cacheSet('avLogs_' + id, state.logs);
+          afterDataChange();
+          if (state.rec && state.rec.asset &&
+              state.rec.asset.inventoryNumber === log.inventoryNumber) renderHistory(log.inventoryNumber);
+        },
+        // เครื่องอื่นลบผลตรวจทิ้ง — ถ้าไม่ตามลบด้วย จอสองเครื่องจะไม่ตรงกันจนกว่าจะรีเฟรช
+        onDelete: (logId) => {
+          if (!removeLogLocal(logId)) return;
+          cacheSet('avLogs_' + id, state.logs);
+          afterDataChange();
+          if (state.rec && state.rec.asset) renderHistory(state.rec.asset.inventoryNumber);
+        },
+        onCount: (row) => {
+          if (row.sessionId && row.sessionId !== id) return;
+          addCountLocal(row);
+          cacheSet('avCounts_' + id, state.counts);
+          afterDataChange();
+          const sheetOpen = !el('countModal').classList.contains('hidden');
+          if (sheetOpen) updateCountView();
+          if ((row.inspector || '') !== inspectorName() && sheetOpen && row.categoryCode === state.count.cat) {
+            toast(row.inspector + ' เพิ่งนับ ' + catLabel(row.categoryCode) + ' ' + row.counted + ' ชิ้น' +
+              (row.locationText ? ' ที่ ' + row.locationText : '') + ' — ยอดนี้ถูกบวกรวมแล้ว', 'warn', null, 7000);
+          }
+        },
+        onCountDelete: (countId) => {
+          if (!countId) return;
+          const before = state.counts.length;
+          state.counts = state.counts.filter((c) => String(c.countId) !== String(countId));
+          if (state.counts.length === before) return;
+          cacheSet('avCounts_' + id, state.counts);
+          afterDataChange();
+          if (!el('countModal').classList.contains('hidden')) updateCountView();
+        }
       });
     } catch (e) {}
+  }
+  const CLASH_WINDOW = 15 * 60 * 1000;
+  /**
+   * เตือนเมื่อเพื่อนร่วมทีมบันทึก "ชิ้นเดียวกัน" กับที่เราเพิ่งบันทึกไป
+   * ระบบเก็บทุกครั้งที่บันทึกไว้ครบ แต่สถานะที่แสดงจะยึดตามเวลาล่าสุด —
+   * ถ้าไม่เตือน คนที่บันทึกก่อนจะไม่มีทางรู้ว่าผลของตัวเองถูกทับ
+   */
+  function warnIfClash(log) {
+    if (!log || !state.profile || !log.inventoryNumber) return;
+    const me = inspectorName();
+    if (log.createdBy ? log.createdBy === state.profile.id : (log.inspector || '') === me) return;
+    const at = new Date(log.verifiedAt).getTime();
+    const mine = allLogs().filter((l) =>
+      l.inventoryNumber === log.inventoryNumber &&
+      (l.createdBy ? l.createdBy === state.profile.id : (l.inspector || '') === me) &&
+      Math.abs(at - new Date(l.verifiedAt).getTime()) < CLASH_WINDOW);
+    if (!mine.length) return;
+    const last = mine.sort((a, b) => String(a.verifiedAt).localeCompare(String(b.verifiedAt))).pop();
+    // คนละชิ้นของรหัสเดียวกัน = ตั้งใจให้เป็นคนละรายการอยู่แล้ว ไม่ต้องเตือน
+    if ((Number(last.pieceNo) || 1) !== (Number(log.pieceNo) || 1)) return;
+    const who = log.inspector || 'ผู้ตรวจคนอื่น';
+    const known = state.master.some((a) => a.inventoryNumber === log.inventoryNumber);
+    const open = known ? () => openAsset(log.inventoryNumber) : null;
+    if (last.result === log.result && last.condition === log.condition) {
+      toast(who + ' บันทึก ' + log.inventoryNumber + ' ซ้ำกับของคุณ (' + statusLabel(log) + ')',
+        'warn', open, 8000);
+    } else {
+      toast(who + ' บันทึก ' + log.inventoryNumber + ' เป็น "' + statusLabel(log) +
+        '" ทับผลของคุณ ("' + statusLabel(last) + '") — แตะเพื่อตรวจสอบ', 'error', open, 12000);
+    }
   }
   function afterDataChange() {
     rebuildIndex();
@@ -885,8 +1016,7 @@ const App = (() => {
       .concat(queueOfSession(id));
     rows.forEach((l) => {
       if (l.unregistered) return;
-      const cur = latest.get(l.inventoryNumber);
-      if (!cur || String(l.verifiedAt) >= String(cur.verifiedAt)) latest.set(l.inventoryNumber, l);
+      if (isNewer(l, latest.get(l.inventoryNumber))) latest.set(l.inventoryNumber, l);
     });
     latest.forEach((l) => {
       seen.add(l.inventoryNumber);
@@ -3222,6 +3352,19 @@ const App = (() => {
           '</div>').join('')
       : '<p class="hint">ยังไม่มีการนับในหมวดนี้</p>';
   }
+  const COUNT_CLASH_WINDOW = 10 * 60 * 1000;
+  /** ยอดล่าสุดของคนอื่น ในหมวดและพื้นที่เดียวกัน ภายใน 10 นาที (null = ไม่มี) */
+  function recentCountClash(cat, location) {
+    const me = inspectorName();
+    const loc = String(location || '').trim().toLowerCase();
+    const now = Date.now();
+    return allCounts().filter((c) =>
+      c.assetType === state.ui.type && c.categoryCode === cat &&
+      (c.inspector || '') !== me &&
+      String(c.locationText || '').trim().toLowerCase() === loc &&
+      now - new Date(c.countedAt).getTime() < COUNT_CLASH_WINDOW)
+      .sort((a, b) => String(a.countedAt).localeCompare(String(b.countedAt))).pop() || null;
+  }
   function canEditCount(c) {
     if (!state.profile) return false;
     if (state.profile.role === 'admin') return true;
@@ -3239,6 +3382,14 @@ const App = (() => {
     if (!(n > 0)) return toast('กรอกจำนวนที่นับได้ (มากกว่า 0)', 'warn');
     const location = el('countLocation').value.trim();
     if (location) cacheSet('avLastLocation', location);
+    // ยอดนับเป็นการ "บวกสะสม" ถ้าเพื่อนเพิ่งนับกองเดียวกันไป การบันทึกต่อ = นับซ้ำ
+    const clash = recentCountClash(cat, location);
+    if (clash && !window.confirm(
+      (clash.inspector || 'ผู้ตรวจคนอื่น') + ' เพิ่งนับหมวด ' + catLabel(cat) + ' ไป ' +
+      clash.counted + ' ชิ้น' + (clash.locationText ? ' ที่ "' + clash.locationText + '"' : '') +
+      ' เมื่อ ' + thaiDT(clash.countedAt) + '\n\n' +
+      'ยอดของคุณจะถูกบวกเพิ่มจากยอดเดิม (ไม่ใช่แทนที่) — ถ้าเป็นกองเดียวกันจะกลายเป็นนับซ้ำ\n\n' +
+      'ยืนยันบันทึกต่อ?')) return;
     const item = {
       kind: 'count', clientId: AssetStore.uuid(), sessionId: s.sessionId, site: s.site,
       assetType: state.ui.type, categoryCode: cat, counted: n,

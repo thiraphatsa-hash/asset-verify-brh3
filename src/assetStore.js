@@ -258,7 +258,12 @@ const AssetStore = (function () {
       res = await getClient().from('asset_verify_log').insert(legacy).select().maybeSingle();
     }
     if (res.error) {
+      // client_id ซ้ำ = แถวนี้ถูกบันทึกไปแล้วรอบก่อน (คำขอถึงเซิร์ฟเวอร์แต่คำตอบหาย)
+      // ดึงแถวจริงกลับมาแทน เพื่อไม่ให้ผลตรวจหายไปจากหน้าจอเครื่องที่ส่ง
       if (res.error.code === '23505' || /duplicate key/i.test(res.error.message || '')) {
+        const found = await getClient().from('asset_verify_log').select('*')
+          .eq('client_id', row.client_id).maybeSingle();
+        if (found.data) return rowToObj(found.data);
         return { duplicate: true };
       }
       throw new Error(res.error.message);
@@ -317,6 +322,9 @@ const AssetStore = (function () {
       .insert(objToRow(rec)).select().maybeSingle();
     if (error) {
       if (error.code === '23505' || /duplicate key/i.test(error.message || '')) {
+        const found = await getClient().from('asset_count_log').select('*')
+          .eq('client_id', rec.clientId).maybeSingle();
+        if (found.data) return rowToObj(found.data);
         return { duplicate: true };
       }
       if (NO_COUNT_TABLE.test(error.message || '')) {
@@ -332,18 +340,45 @@ const AssetStore = (function () {
     fail(error);
     return { success: true };
   }
-  /** รับผลตรวจใหม่จากเครื่องอื่นแบบสด เฉพาะรอบที่กำลังเปิดอยู่ */
-  function subscribeLogs(sessionId, onInsert, onStatus) {
-    const ch = getClient().channel('asset-verify-' + (sessionId || 'all'))
+  /**
+   * รับความเปลี่ยนแปลงจากเครื่องอื่นแบบสด เฉพาะรอบที่กำลังเปิดอยู่
+   * handlers = { onInsert, onDelete, onCount, onCountDelete } (ส่งเป็นฟังก์ชันเดียว = onInsert)
+   *
+   * ข้อควรรู้ 2 ข้อ:
+   *  1) event DELETE ของ Postgres ส่งมาเฉพาะคีย์หลัก จึงกรองด้วย session_id ไม่ได้
+   *     → รับมาทุกรอบแล้วให้ฝั่งแอปเทียบ id เอาเองว่าเป็นแถวที่ตัวเองถืออยู่หรือไม่
+   *  2) ยอดนับแยกไปอีก channel — ถ้ายังไม่ได้รัน asset-counts.sql แล้ว channel นั้นพัง
+   *     ผลตรวจรายชิ้นต้องไม่พังตามไปด้วย
+   */
+  function subscribeLogs(sessionId, handlers, onStatus) {
+    const h = typeof handlers === 'function' ? { onInsert: handlers } : (handlers || {});
+    const safe = (fn, arg) => { if (fn) { try { fn(arg); } catch (e) {} } };
+    const chLog = getClient().channel('asset-verify-' + (sessionId || 'all'))
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'asset_verify_log',
           filter: sessionId ? 'session_id=eq.' + sessionId : undefined },
-        (payload) => { try { onInsert(rowToObj(payload.new)); } catch (e) {} })
+        (p) => safe(h.onInsert, rowToObj(p.new)))
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'asset_verify_log' },
+        (p) => safe(h.onDelete, p.old ? p.old.log_id : null))
       .subscribe((status) => { if (onStatus) onStatus(status); });
-    return ch;
+    let chCount = null;
+    try {
+      chCount = getClient().channel('asset-count-' + (sessionId || 'all'))
+        .on('postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'asset_count_log',
+            filter: sessionId ? 'session_id=eq.' + sessionId : undefined },
+          (p) => safe(h.onCount, rowToObj(p.new)))
+        .on('postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'asset_count_log' },
+          (p) => safe(h.onCountDelete, p.old ? p.old.count_id : null))
+        .subscribe(() => {});
+    } catch (e) { chCount = null; }
+    return chCount ? [chLog, chCount] : [chLog];
   }
   function unsubscribe(ch) {
-    try { if (ch) getClient().removeChannel(ch); } catch (e) {}
+    const list = Array.isArray(ch) ? ch : [ch];
+    list.forEach((c) => { try { if (c) getClient().removeChannel(c); } catch (e) {} });
   }
 
   // ── รูปถ่าย (Storage) ──────────────────────────────────────────────────────

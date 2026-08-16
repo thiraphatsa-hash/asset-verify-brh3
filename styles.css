@@ -286,6 +286,8 @@ h1, h2, h3, h4 { margin: 0; font-family: var(--font-head); font-weight: var(--he
   padding: 7px 11px; font-size: 12.5px; font-weight: 700; cursor: pointer;
   animation: pulse 2s ease infinite; white-space: nowrap;
 }
+/* ส่งไม่ผ่านด้วยสาเหตุถาวร — ต้องต่างจาก "แค่รอส่ง" ให้เห็นชัดจากหางตา */
+.sync-chip.stuck { background: var(--no); color: #fff; }
 .net-chip { font-size: 12px; }
 .net-chip.online { color: #7BE0A6; }
 .net-chip.offline { color: #FF9C8A; }
@@ -1095,6 +1097,7 @@ td.num, th.num { text-align: center; }
 .toast.success { background: var(--ok); }
 .toast.error { background: var(--no); }
 .toast.warn { background: var(--dmg); }
+.toast.tappable { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } }
 .busy-overlay {
   position: fixed; inset: 0; z-index: 65; background: rgba(245,245,243,.86);
