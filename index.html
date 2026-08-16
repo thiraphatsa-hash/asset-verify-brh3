@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.8.0">
+  <link rel="stylesheet" href="styles.css?v=2.8.1">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -296,7 +296,11 @@
     <div id="bulkBar" class="bulk-bar hidden">
       <div class="bulk-bar-info"><b id="bulkBarCount">0</b> รายการที่เลือก
         <button class="link-button" type="button" onclick="App.clearSelection()">ล้าง</button></div>
-      <input id="bulkBarLocation" type="text" list="areaList" placeholder="พื้นที่ / ตำแหน่งที่ตรวจ (ไม่บังคับ)">
+      <div class="loc-input">
+        <input id="bulkBarLocation" type="text" list="areaList" placeholder="พื้นที่ / ตำแหน่งที่ตรวจ (ไม่บังคับ)">
+        <button class="loc-pick" type="button" title="เลือกจากพื้นที่ที่มีอยู่ทั้งหมด"
+          onclick="App.openAreaPicker('bulkBarLocation')"><span data-icon="pin"></span></button>
+      </div>
       <div class="bulk-bar-actions">
         <button class="seg seg-ok" type="button" onclick="App.applySelection('FOUND_NORMAL')"><span data-icon="check"></span> พบ</button>
         <button class="seg seg-no" type="button" onclick="App.applySelection('NOT_FOUND')"><span data-icon="close"></span> ไม่พบ</button>
@@ -396,8 +400,12 @@
           </div>
 
           <label class="field"><span id="recLocLabel">พื้นที่ / ตำแหน่งที่ตรวจ</span>
-            <input id="recLocation" type="text" list="areaList" autocomplete="off"
-              placeholder="เช่น โกดัง 1 / Office / อาคาร A ชั้น 2"></label>
+            <span class="loc-input">
+              <input id="recLocation" type="text" list="areaList" autocomplete="off"
+                placeholder="เช่น โกดัง 1 / Office / อาคาร A ชั้น 2">
+              <button class="loc-pick" type="button" title="เลือกจากพื้นที่ที่มีอยู่ทั้งหมด"
+                onclick="App.openAreaPicker('recLocation')"><span data-icon="pin"></span></button>
+            </span></label>
           <p id="recLocHint" class="hint"></p>
 
           <label class="field"><span>หมายเหตุ</span>
@@ -467,7 +475,11 @@
           <button type="button" class="seg seg-no" data-result="NOT_FOUND" onclick="App.setBulkResult('NOT_FOUND')"><span data-icon="close"></span> ไม่พบ</button>
         </div>
         <label class="field"><span>ตำแหน่งที่ตรวจ</span>
-          <input id="bulkLocation" type="text" list="areaList" placeholder="เช่น โกดัง 1 / คลังเก็บของ โซน B"></label>
+          <span class="loc-input">
+            <input id="bulkLocation" type="text" list="areaList" placeholder="เช่น โกดัง 1 / คลังเก็บของ โซน B">
+            <button class="loc-pick" type="button" title="เลือกจากพื้นที่ที่มีอยู่ทั้งหมด"
+              onclick="App.openAreaPicker('bulkLocation')"><span data-icon="pin"></span></button>
+          </span></label>
         <div id="bulkCounter" class="bulk-counter"></div>
         <div id="bulkLast" class="bulk-last"></div>
       </div>
@@ -543,7 +555,11 @@
           </div>
         </div>
         <label class="field"><span>จุดที่นับ</span>
-          <input id="countLocation" type="text" list="areaList" placeholder="เช่น โกดัง 1 / ชั้น 3 โซน B"></label>
+          <span class="loc-input">
+            <input id="countLocation" type="text" list="areaList" placeholder="เช่น โกดัง 1 / ชั้น 3 โซน B">
+            <button class="loc-pick" type="button" title="เลือกจากพื้นที่ที่มีอยู่ทั้งหมด"
+              onclick="App.openAreaPicker('countLocation')"><span data-icon="pin"></span></button>
+          </span></label>
         <label class="field"><span>หมายเหตุ (ไม่บังคับ)</span>
           <input id="countNote" type="text" placeholder="เช่น กองรวมยังไม่ติดสติกเกอร์"></label>
         <button class="primary-button full-width big-save" type="button" onclick="App.saveCountEntry()">
@@ -609,15 +625,32 @@
     </div>
   </div>
 
+  <!-- ── เลือกพื้นที่จัดเก็บจากรายการทั้งหมด (ใช้ร่วมกันทุกช่องพื้นที่) ──────── -->
+  <div id="areaModal" class="modal area-modal hidden" onclick="if(event.target===this)App.closeAreaPicker()">
+    <div class="sheet dup-sheet">
+      <div class="sheet-head">
+        <div><h3><span data-icon="pin"></span> พื้นที่จัดเก็บทั้งหมด</h3><p id="areaPickSub"></p></div>
+        <button class="close-button" type="button" onclick="App.closeAreaPicker()"><span data-icon="close"></span></button>
+      </div>
+      <div class="sheet-body">
+        <label class="search-box"><span data-icon="search"></span>
+          <input id="areaPickSearch" type="search" placeholder="ค้นหาพื้นที่ / พิมพ์ชื่อใหม่"
+            oninput="App.setAreaPickSearch(this.value)">
+        </label>
+        <div id="areaPickList" class="area-pick-list"></div>
+      </div>
+    </div>
+  </div>
+
   <datalist id="locList"></datalist>
   <datalist id="areaList"></datalist>
   <div id="toastContainer" class="toast-container"></div>
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.8.0" defer></script>
-  <script src="config.js?v=2.8.0"></script>
-  <script src="src/assetStore.js?v=2.8.0"></script>
-  <script src="app.js?v=2.8.0"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.8.1" defer></script>
+  <script src="config.js?v=2.8.1"></script>
+  <script src="src/assetStore.js?v=2.8.1"></script>
+  <script src="app.js?v=2.8.1"></script>
 </body>
 </html>

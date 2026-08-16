@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.8.0';
+  const APP_VERSION = 'v2.8.1';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -189,6 +189,7 @@ const App = (() => {
     home: { q: '', status: '', sort: 'created' },
     ui: {
       type: 'FIXED', view: 'table', q: '', cat: '', staff: '', area: '', status: '', sort: 'inv',
+      limit: 150,                                // แถวที่วาดอยู่ (= PAGE_SIZE) เพิ่มเองเมื่อเลื่อนถึงท้าย
       cols: { FIXED: null, RENTAL: null }        // null = อัตโนมัติตามขนาดจอ
     },
     act: { who: '', result: '', range: '', q: '', sort: 'new' },   // หน้าประวัติการบันทึก
@@ -197,6 +198,7 @@ const App = (() => {
     geoWatch: null,
     leaf: null,                                                    // Leaflet map instance
     count: { cat: '', n: 1 },
+    areaPick: null,                                                // แผงเลือกพื้นที่จัดเก็บ
     rec: null,
     accessSeen: {},
     accessTimer: null,
@@ -1104,6 +1106,7 @@ const App = (() => {
     if (!s) return toast('ไม่พบรอบตรวจ', 'error');
     state.activeSession = s;
     state.selection.clear();
+    resetLimit();
     state.master = cacheGet('avMaster_' + id) || [];
     state.logs = cacheGet('avLogs_' + id) || [];
     state.counts = cacheGet('avCounts_' + id) || [];
@@ -1538,6 +1541,90 @@ const App = (() => {
     el('locList').innerHTML = opts.slice(0, 40)
       .map((v) => '<option value="' + esc(v) + '"></option>').join('');
   }
+  // ── เลือกพื้นที่จากรายการทั้งหมด ──────────────────────────────────────────────
+  // datalist ของเบราว์เซอร์กรองตามข้อความที่อยู่ในช่อง พอระบบเติมค่าไว้ให้แล้วจึงเห็น
+  // ตัวเลือกเดียว — ปุ่มหมุดข้างช่องเปิดแผงนี้เพื่อดู "พื้นที่ที่มีอยู่ทั้งหมด" ได้จริง
+  /** ทุกพื้นที่ที่ระบบรู้จัก: ที่เพิ่งใช้ → ในทะเบียน (มากไปน้อย) → ที่เคยพิมพ์ตอนตรวจ */
+  function areaRows() {
+    const inReg = {};
+    state.master.forEach((a) => {
+      const v = (a.location || '').trim();
+      if (v) inReg[v] = (inReg[v] || 0) + 1;
+    });
+    const logged = {};
+    allLogs().forEach((l) => {
+      const v = (l.locationText || '').trim();
+      if (v) logged[v] = (logged[v] || 0) + 1;
+    });
+    const seen = {};
+    const rows = [];
+    const add = (raw, tag) => {
+      const s = String(raw || '').trim();
+      if (!s || seen[s]) return;
+      seen[s] = 1;
+      const bits = [];
+      if (tag) bits.push(tag);
+      if (inReg[s]) bits.push('ในทะเบียน ' + inReg[s] + ' ชิ้น');
+      if (logged[s]) bits.push('บันทึกแล้ว ' + logged[s] + ' ครั้ง');
+      rows.push({ value: s, sub: bits.join(' · ') || 'เคยพิมพ์ไว้เอง' });
+    };
+    (cacheGet('avRecentAreas') || []).forEach((v) => add(v, 'ใช้ล่าสุด'));
+    Object.keys(inReg).sort((a, b) => inReg[b] - inReg[a] || a.localeCompare(b, 'th')).forEach((v) => add(v));
+    Object.keys(logged).sort((a, b) => logged[b] - logged[a] || a.localeCompare(b, 'th')).forEach((v) => add(v));
+    return rows;
+  }
+  function openAreaPicker(targetId) {
+    state.areaPick = { target: targetId, q: '' };
+    el('areaPickSearch').value = '';
+    renderAreaPick();
+    el('areaModal').classList.remove('hidden');
+  }
+  function closeAreaPicker() {
+    el('areaModal').classList.add('hidden');
+    state.areaPick = null;
+  }
+  function setAreaPickSearch(v) {
+    if (state.areaPick) state.areaPick.q = String(v || '');
+    renderAreaPick();
+  }
+  function renderAreaPick() {
+    const p = state.areaPick || { q: '', target: '' };
+    const rows = areaRows();
+    const q = p.q.trim();
+    const ql = q.toLowerCase();
+    const shown = ql ? rows.filter((r) => r.value.toLowerCase().indexOf(ql) >= 0) : rows;
+    const input = el(p.target);
+    const cur = input ? input.value.trim() : '';
+    el('areaPickSub').textContent = rows.length
+      ? 'มีทั้งหมด ' + rows.length + ' พื้นที่' + (q ? ' · ตรงกับที่ค้นหา ' + shown.length : '')
+      : 'ยังไม่มีพื้นที่ในระบบ — พิมพ์ชื่อใหม่ได้เลย';
+    const row = (val, title, sub, cls) =>
+      '<button class="area-row' + (cls ? ' ' + cls : '') + (val && val === cur ? ' on' : '') +
+      '" type="button" data-area="' + esc(val) + '">' +
+      icon(cls === 'new' ? 'plus' : (cls === 'clear' ? 'close' : 'pin')) +
+      '<span><b>' + title + '</b><small>' + esc(sub) + '</small></span>' +
+      (val && val === cur ? '<em class="area-cur">ใช้อยู่</em>' : '') + '</button>';
+    // มีของเดิมที่ใกล้เคียงอยู่แล้ว → ดันตัวเลือก "สร้างใหม่" ไปไว้ท้ายสุด กันกดพลาดจนได้ชื่อซ้ำซ้อน
+    const newRow = (q && !rows.some((r) => r.value.toLowerCase() === ql))
+      ? row(q, 'ใช้ "' + esc(q) + '" เป็นพื้นที่ใหม่', 'ยังไม่มีในระบบ', 'new') : '';
+    el('areaPickList').innerHTML =
+      (shown.length ? '' : newRow) +
+      shown.map((r) => row(r.value, esc(r.value), r.sub)).join('') +
+      (!shown.length && !newRow ? '<p class="hint">ยังไม่มีพื้นที่บันทึกไว้ในรอบนี้</p>' : '') +
+      (shown.length ? newRow : '') +
+      row('', 'ไม่ระบุพื้นที่', 'ล้างค่าในช่องนี้', 'clear');
+  }
+  function chooseArea(v) {
+    const p = state.areaPick;
+    if (!p) return;
+    const input = el(p.target);
+    if (input) {
+      input.value = v;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    closeAreaPicker();
+  }
   function filteredAssets() {
     const ui = state.ui;
     let list = mastersOfType();
@@ -1715,12 +1802,16 @@ const App = (() => {
       el('cardWrap').innerHTML = '';
       return;
     }
-    const list = filteredAssets();
+    const all = filteredAssets();
     let done = 0;
-    list.forEach((a) => {
+    all.forEach((a) => {
       if (classify(state.latest.get(a.inventoryNumber)) !== 'pending') done++;
     });
-    el('counter').textContent = 'ตรวจแล้ว ' + done + ' / ' + list.length;
+    el('counter').textContent = 'ตรวจแล้ว ' + done + ' / ' + all.length;
+    // ทะเบียนใหญ่ (KL12 = 2,487 แถว) วาดทีเดียวหมดทำให้มือถือหน่วงทั้งจอ และวาดใหม่ทุกครั้ง
+    // ที่มีการบันทึก → แสดงทีละหน้า แล้วต่อให้เองเมื่อเลื่อนถึงท้ายรายการ
+    const list = all.slice(0, state.ui.limit);
+    const more = all.length - list.length;
     const isFixed = state.ui.type === 'FIXED';
     const tableMode = state.ui.view === 'table';
     el('tableWrap').classList.toggle('hidden', !tableMode);
@@ -1729,7 +1820,7 @@ const App = (() => {
     if (tableMode) {
       // ── โครงตารางยึดตามฟอร์มรายงานตรวจสอบทรัพย์สินต้นฉบับ (.xls) ──
       // คอลัมน์ทั้งหมดนิยามไว้ที่ TABLE_COLS → เลือกเปิด/ปิดได้เอง (ปุ่ม "คอลัมน์")
-      const allSel = list.length > 0 && list.every((a) => state.selection.has(a.inventoryNumber));
+      const allSel = all.length > 0 && all.every((a) => state.selection.has(a.inventoryNumber));
       const chk = state.canWrite ? '<th class="col-check" rowspan="2"><input type="checkbox" id="checkAll"' +
         (allSel ? ' checked' : '') + ' title="เลือกทั้งหมดที่กรองอยู่"></th>' : '';
       const cols = visibleCols();
@@ -1773,7 +1864,9 @@ const App = (() => {
           (noteCol ? td(noteCol) : '') +
           '<td class="col-more"><button class="qbtn more" data-act="open" title="รายละเอียด / ย้ายออก / รูปถ่าย">' + icon('more') + '</button></td>' +
           '</tr>';
-      }).join('') || '<tr><td colspan="16"><p class="empty-note">ไม่พบรายการตามเงื่อนไข</p></td></tr>';
+      }).join('') + (more
+        ? '<tr id="moreRow" class="more-row"><td colspan="16">' + moreButton(list.length, all.length) + '</td></tr>'
+        : '') || '<tr><td colspan="16"><p class="empty-note">ไม่พบรายการตามเงื่อนไข</p></td></tr>';
     } else {
       el('cardWrap').innerHTML = list.map((a) => {
         const latest = state.latest.get(a.inventoryNumber);
@@ -1800,13 +1893,34 @@ const App = (() => {
                 icon('camera') + ' ดูรูป (' + photoCountOf(latest) + ')</button>'
               : '') + '</div>' : '') +
           '</div>';
-      }).join('') || '<p class="empty-note">ไม่พบรายการตามเงื่อนไข</p>';
+      }).join('') + (more ? '<div id="moreRow" class="more-row">' + moreButton(list.length, all.length) + '</div>' : '')
+        || '<p class="empty-note">ไม่พบรายการตามเงื่อนไข</p>';
     }
     updateBulkBar();
   }
+  const PAGE_SIZE = 150;
+  function moreButton(shown, total) {
+    return '<button type="button" class="more-btn" onclick="App.showMore()">' +
+      'แสดงเพิ่ม (ตอนนี้ ' + shown.toLocaleString() + ' จาก ' + total.toLocaleString() + ' รายการ)</button>';
+  }
+  /** เลื่อนใกล้ท้ายรายการ = ต่อให้เองอีกหน้า ไม่ต้องกดปุ่ม (ผูก listener ครั้งเดียวตอน init) */
+  function checkMoreOnScroll() {
+    const row = el('moreRow');
+    if (!row) return;
+    if (row.getBoundingClientRect().top < window.innerHeight + 600) showMore();
+  }
+  function showMore() {
+    const total = filteredAssets().length;
+    if (state.ui.limit >= total) return;
+    state.ui.limit += PAGE_SIZE;
+    renderList();
+  }
+  /** เปลี่ยนตัวกรอง/การเรียง = เริ่มนับหน้าใหม่ ไม่ค้างจำนวนแถวของชุดเดิม */
+  function resetLimit() { state.ui.limit = PAGE_SIZE; }
   function setType(t) {
     state.ui.type = t;
     state.selection.clear();
+    resetLimit();
     el('typeFIXED').classList.toggle('active', t === 'FIXED');
     el('typeRENTAL').classList.toggle('active', t === 'RENTAL');
     renderFilterOptions();
@@ -1816,14 +1930,15 @@ const App = (() => {
   function setView(v) {
     state.ui.view = v;
     cacheSet('avView', v);
+    resetLimit();
     el('viewTable').classList.toggle('active', v === 'table');
     el('viewCard').classList.toggle('active', v === 'card');
     renderList();
   }
-  function setSearch(v) { state.ui.q = v.trim(); renderList(); }
-  function setCat(v) { state.ui.cat = v; renderList(); }
-  function setStaff(v) { state.ui.staff = v; renderList(); }
-  function setArea(v) { state.ui.area = v; renderList(); }
+  function setSearch(v) { state.ui.q = v.trim(); resetLimit(); renderList(); }
+  function setCat(v) { state.ui.cat = v; resetLimit(); renderList(); }
+  function setStaff(v) { state.ui.staff = v; resetLimit(); renderList(); }
+  function setArea(v) { state.ui.area = v; resetLimit(); renderList(); }
   /**
    * เขียนพื้นที่จัดเก็บลงทะเบียนของรอบนี้ (ผู้ตรวจเติม/แก้เองได้หน้างาน)
    * ต้องออนไลน์ เพราะเป็นการแก้ "ทะเบียน" ไม่ใช่ผลตรวจ (ผลตรวจยังทำออฟไลน์ได้เหมือนเดิม)
@@ -1876,9 +1991,10 @@ const App = (() => {
     await applyAreaTo(invs, area.trim());
     clearSelection();
   }
-  function setSort(v) { state.ui.sort = v; renderList(); }
+  function setSort(v) { state.ui.sort = v; resetLimit(); renderList(); }
   function setStatus(v) {
     state.ui.status = v;
+    resetLimit();
     document.querySelectorAll('#statusChips .chip').forEach((c) => {
       c.classList.toggle('active', c.dataset.status === v);
     });
@@ -4588,6 +4704,17 @@ const App = (() => {
     setInterval(() => {
       if (state.profile && navigator.onLine && !document.hidden) refreshAll(true);
     }, 120000);
+    let moreTick = 0;
+    window.addEventListener('scroll', () => {
+      const now = Date.now();
+      if (now - moreTick < 150) return;      // เบาพอที่จะไม่หน่วงการเลื่อนบนมือถือ
+      moreTick = now;
+      checkMoreOnScroll();
+    }, { passive: true });
+    el('areaPickList').addEventListener('click', (ev) => {
+      const row = ev.target.closest('.area-row');
+      if (row) chooseArea(row.dataset.area || '');
+    });
     el('colPanel').addEventListener('click', (ev) => ev.stopPropagation());
     el('actList').addEventListener('click', (ev) => ev.stopPropagation());
     applyTheme(cacheGet('avTheme') || 'porcelain');
@@ -4611,6 +4738,7 @@ const App = (() => {
     setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession,
     readMasterFile, confirmImport, cancelImport,
     setType, setView, setSearch, setCat, setStaff, setArea, setSort, setStatus, setSelectedArea,
+    openAreaPicker, closeAreaPicker, setAreaPickSearch, showMore,
     openQueuePanel, closeQueuePanel, retryQueue, dropQueueItem, dropAllQueue, setCountCustom,
     setMapWho, setMapRange, setMapArea,
     toggleColPicker, closeColPicker, toggleCol, pickAllCols, resetCols,
