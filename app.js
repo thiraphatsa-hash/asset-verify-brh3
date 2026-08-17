@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.8.1';
+  const APP_VERSION = 'v2.8.2';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -1472,11 +1472,13 @@ const App = (() => {
       if (!v) { noArea++; return; }
       ac[v] = (ac[v] || 0) + 1;
     });
-    const areas = Object.keys(ac).sort((a, b) => a.localeCompare(b, 'th'));
+    // เรียงตามรหัสพื้นที่ก่อน (Z001, Z002, ...) โซนที่ยังไม่มีรหัสไปต่อท้ายเรียงตามชื่อ
+    const areas = Object.keys(ac).sort((a, b) =>
+      (areaCodeOf(a) || 'zzzz~' + a).localeCompare(areaCodeOf(b) || 'zzzz~' + b, 'th'));
     let h3 = '<option value="">พื้นที่: ทั้งหมด (' + list.length + ')</option>';
     if (noArea) h3 += '<option value="__NONE__">(ไม่ระบุพื้นที่) — ' + noArea + '</option>';
     areas.forEach((v) => {
-      h3 += '<option value="' + esc(v) + '">' + esc(v) + ' (' + ac[v] + ')</option>';
+      h3 += '<option value="' + esc(v) + '">' + esc(areaLabel(v)) + ' (' + ac[v] + ')</option>';
     });
     areaSel.innerHTML = h3;
     areaSel.value = curArea && (curArea === '__NONE__' || ac[curArea]) ? curArea : '';
@@ -1485,6 +1487,39 @@ const App = (() => {
 
     el('tabCountF').textContent = state.master.filter((a) => a.assetType === 'FIXED').length;
     el('tabCountR').textContent = state.master.filter((a) => a.assetType === 'RENTAL').length;
+  }
+  // ── รหัสพื้นที่ (Port ED) ───────────────────────────────────────────────────
+  // ทะเบียนเก็บทั้งรหัส (Port ED เช่น Z006) และชื่อโซน (Port ED - Text เช่น โกดัง 1)
+  // หน้างานเรียกกันด้วยรหัส จึงแสดง "รหัส · ชื่อ" ทุกที่ที่โชว์ชื่อโซน
+  // (ค่าที่บันทึกจริงยังเป็น "ชื่อโซน" ล้วนเหมือนเดิม — รหัสเป็นแค่ป้ายกำกับบนจอ)
+  let areaCodeCache = { src: null, map: {} };
+  function areaCodeMap() {
+    if (areaCodeCache.src === state.master) return areaCodeCache.map;
+    const tally = {};
+    state.master.forEach((a) => {
+      const name = (a.location || '').trim();
+      const code = (a.locationCode || '').trim();
+      if (!name || !code) return;
+      if (!tally[name]) tally[name] = {};
+      tally[name][code] = (tally[name][code] || 0) + 1;
+    });
+    const map = {};
+    // ชื่อโซนเดียวอาจมีหลายรหัสปนกันในไฟล์ — ใช้รหัสที่พบมากที่สุดของโซนนั้น
+    Object.keys(tally).forEach((name) => {
+      map[name] = Object.keys(tally[name]).sort((a, b) => tally[name][b] - tally[name][a])[0];
+    });
+    areaCodeCache = { src: state.master, map: map };
+    return map;
+  }
+  function areaCodeOf(name) {
+    const s = String(name || '').trim();
+    return s ? (areaCodeMap()[s] || '') : '';
+  }
+  /** ป้ายชื่อพื้นที่ที่แสดงบนจอ: "Z006 · โกดัง 1" (ไม่มีรหัสก็โชว์ชื่อเปล่า) */
+  function areaLabel(name) {
+    const s = String(name || '').trim();
+    const code = areaCodeOf(s);
+    return code ? code + ' · ' + s : s;
   }
   /** รายชื่อพื้นที่ที่รู้จักในรอบนี้ เรียง "ที่ใช้ล่าสุด" ขึ้นก่อนเสมอ */
   function knownAreas() {
@@ -1569,7 +1604,9 @@ const App = (() => {
       rows.push({ value: s, sub: bits.join(' · ') || 'เคยพิมพ์ไว้เอง' });
     };
     (cacheGet('avRecentAreas') || []).forEach((v) => add(v, 'ใช้ล่าสุด'));
-    Object.keys(inReg).sort((a, b) => inReg[b] - inReg[a] || a.localeCompare(b, 'th')).forEach((v) => add(v));
+    // เรียงตามรหัสพื้นที่ให้ตรงกับตัวกรองด้านบน (ไม่มีรหัสไปต่อท้าย)
+    Object.keys(inReg).sort((a, b) =>
+      (areaCodeOf(a) || 'zzzz~' + a).localeCompare(areaCodeOf(b) || 'zzzz~' + b, 'th')).forEach((v) => add(v));
     Object.keys(logged).sort((a, b) => logged[b] - logged[a] || a.localeCompare(b, 'th')).forEach((v) => add(v));
     return rows;
   }
@@ -1592,7 +1629,9 @@ const App = (() => {
     const rows = areaRows();
     const q = p.q.trim();
     const ql = q.toLowerCase();
-    const shown = ql ? rows.filter((r) => r.value.toLowerCase().indexOf(ql) >= 0) : rows;
+    // ค้นได้ทั้งชื่อโซนและรหัสพื้นที่ (พิมพ์ Z006 ก็เจอ "โกดัง 1")
+    const shown = ql ? rows.filter((r) =>
+      (r.value + ' ' + areaCodeOf(r.value)).toLowerCase().indexOf(ql) >= 0) : rows;
     const input = el(p.target);
     const cur = input ? input.value.trim() : '';
     el('areaPickSub').textContent = rows.length
@@ -1609,7 +1648,7 @@ const App = (() => {
       ? row(q, 'ใช้ "' + esc(q) + '" เป็นพื้นที่ใหม่', 'ยังไม่มีในระบบ', 'new') : '';
     el('areaPickList').innerHTML =
       (shown.length ? '' : newRow) +
-      shown.map((r) => row(r.value, esc(r.value), r.sub)).join('') +
+      shown.map((r) => row(r.value, esc(areaLabel(r.value)), r.sub)).join('') +
       (!shown.length && !newRow ? '<p class="hint">ยังไม่มีพื้นที่บันทึกไว้ในรอบนี้</p>' : '') +
       (shown.length ? newRow : '') +
       row('', 'ไม่ระบุพื้นที่', 'ล้างค่าในช่องนี้', 'clear');
@@ -1694,7 +1733,7 @@ const App = (() => {
   };
   const COL_LOC = {
     key: 'location', label: 'พื้นที่จัดเก็บ', cls: 'c-md',
-    get: (c) => (c.asset.location || '').trim()
+    get: (c) => areaLabel(c.asset.location)
   };
   const COLS_TAIL = [
     { key: 'moveSite', label: 'ส่งไป SITE', cls: 'c-lg', group: 'move',
@@ -2299,8 +2338,9 @@ const App = (() => {
     el('recLocLabel').textContent = areaNow
       ? 'พื้นที่ / ตำแหน่งที่ตรวจ (ทะเบียนระบุไว้ — แก้ได้ถ้าไม่ตรง)'
       : 'พื้นที่ / ตำแหน่งที่ตรวจ (ทะเบียนยังไม่ระบุ)';
+    const codeNow = areaCodeOf(areaNow);
     el('recLocHint').textContent = areaNow
-      ? 'แก้แล้วบันทึก = อัปเดตพื้นที่ในทะเบียนให้ด้วย'
+      ? (codeNow ? 'รหัสพื้นที่ ' + codeNow + ' · ' : '') + 'แก้แล้วบันทึก = อัปเดตพื้นที่ในทะเบียนให้ด้วย'
       : (lastMine ? 'ใส่พื้นที่ล่าสุดที่คุณบันทึกไว้ให้แล้ว — แก้ได้ตามจริง บันทึกแล้วจะเติมลงทะเบียนให้'
         : 'พิมพ์พื้นที่ได้เลย บันทึกแล้วระบบจะเติมลงทะเบียนให้');
     renderAreaList();
@@ -3832,7 +3872,7 @@ const App = (() => {
           groupBars(fixedList, (a) => (a.staffText || '').trim()) + '</div>' +
         (state.master.some((a) => (a.location || '').trim())
           ? '<div class="dash-card wide"><h4>' + icon('pin') + ' ตามพื้นที่จัดเก็บ</h4>' +
-            groupBars(state.master, (a) => (a.location || '').trim() || '(ไม่ระบุพื้นที่)') + '</div>'
+            groupBars(state.master, (a) => areaLabel(a.location) || '(ไม่ระบุพื้นที่)') + '</div>'
           : '') +
       '</div>' +
       '<div class="dash-card wide"><h4>รายการตรวจล่าสุด</h4>' +
@@ -3911,7 +3951,7 @@ const App = (() => {
               '<option value="__NONE__"' + (state.map.area === '__NONE__' ? ' selected' : '') +
                 '>(ไม่ระบุพื้นที่)</option>' +
               areas.map((v) => '<option value="' + esc(v) + '"' +
-                (state.map.area === v ? ' selected' : '') + '>' + esc(v) + '</option>').join('') +
+                (state.map.area === v ? ' selected' : '') + '>' + esc(areaLabel(v)) + '</option>').join('') +
             '</select>' : '') +
             '<span id="mapCount" class="count-pill"></span>' +
           '</div>' +
