@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.8.2';
+  const APP_VERSION = 'v2.8.3';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -586,16 +586,19 @@ const App = (() => {
   function rebuildIndex() {
     const map = new Map();
     const piecesSeen = new Map();      // inv → Set(pieceNo)
+    const recSeen = new Map();         // inv → จำนวนครั้งที่ถูกบันทึกทั้งหมด
     allLogs().forEach((l) => {
       if (isNewer(l, map.get(l.inventoryNumber))) map.set(l.inventoryNumber, l);
       const set = piecesSeen.get(l.inventoryNumber) || new Set();
       set.add(Number(l.pieceNo) > 0 ? Number(l.pieceNo) : 1);
       piecesSeen.set(l.inventoryNumber, set);
+      recSeen.set(l.inventoryNumber, (recSeen.get(l.inventoryNumber) || 0) + 1);
     });
-    // แนบจำนวนชิ้นที่บันทึกไว้ให้ record ล่าสุด เพื่อให้ตาราง/สรุปใช้ได้ทันที
+    // แนบจำนวนชิ้น + จำนวนครั้งที่บันทึกให้ record ล่าสุด เพื่อให้ตาราง/ตัวกรองใช้ได้ทันที
     map.forEach((l, inv) => {
       const set = piecesSeen.get(inv);
       l.pieces = set ? set.size : 1;
+      l.records = recSeen.get(inv) || 1;
     });
     state.latest = map;
     rebuildIdIndex();
@@ -1686,7 +1689,10 @@ const App = (() => {
         return words.every((w) => hay.indexOf(w) >= 0);
       });
     }
-    if (ui.status) {
+    if (ui.status === 'dup') {
+      // ซ้ำ = RT code เดียวพบหลายชิ้น หรือถูกบันทึกมากกว่า 1 ครั้ง (แก้ผลเดิม/สองคนบันทึกชนกัน)
+      list = list.filter((a) => isDup(state.latest.get(a.inventoryNumber)));
+    } else if (ui.status) {
       list = list.filter((a) => {
         return classify(state.latest.get(a.inventoryNumber)) === ui.status;
       });
@@ -1705,11 +1711,18 @@ const App = (() => {
     }
     return sorted;
   }
+  /** ซ้ำ = พบหลายชิ้นในรหัสเดียว หรือรหัสนี้ถูกบันทึกมากกว่า 1 ครั้ง */
+  function isDup(l) {
+    return Boolean(l && ((Number(l.pieces) || 1) > 1 || (Number(l.records) || 1) > 1));
+  }
   function statusCell(latest) {
     const cls = classify(latest);
     const n = latest && latest.pieces > 1 ? latest.pieces : 0;
+    const rec = latest && !n && latest.records > 1 ? latest.records : 0;
     return '<span class="pill st-' + cls + '">' + esc(statusLabel(latest)) + '</span>' +
-      (n ? '<span class="dup-badge" title="RT code นี้ถูกบันทึก ' + n + ' ชิ้น">× ' + n + '</span>' : '');
+      (n ? '<span class="dup-badge" title="RT code นี้ถูกบันทึก ' + n + ' ชิ้น">× ' + n + '</span>' : '') +
+      (rec ? '<span class="dup-badge rec" title="รหัสนี้ถูกบันทึก ' + rec +
+        ' ครั้ง (แก้ผลเดิม หรือมีคนบันทึกชนกัน) — เปิดดูประวัติได้">ซ้ำ ' + rec + '</span>' : '');
   }
   function verifyMeta(l) {
     if (!l) return '<span class="text-faint">—</span>';

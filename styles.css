@@ -808,6 +808,8 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
   display: inline-block; margin-left: 4px; padding: 2px 7px; border-radius: var(--r-sm);
   background: var(--dmg-bg); color: var(--dmg); font-size: 11.5px; font-weight: 700;
 }
+/* บันทึกซ้ำในชิ้นเดียวกัน — ต่างจาก "× N ชิ้น" ที่เป็นของจริงหลายชิ้น */
+.dup-badge.rec { background: var(--surface-2); color: var(--muted); font-weight: 600; }
 .dup-sheet { max-width: 460px; }
 .dup-pieces { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .dup-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
