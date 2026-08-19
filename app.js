@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.8.3';
+  const APP_VERSION = 'v2.8.4';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -545,6 +545,9 @@ const App = (() => {
       inventoryNumber: it.inventoryNumber, assetType: it.assetType,
       result: it.result, condition: it.condition, method: it.method,
       inspector: it.inspector, locationText: it.locationText, pieceNo: it.pieceNo || 1,
+      gpsLat: it.gpsLat == null ? null : it.gpsLat,
+      gpsLng: it.gpsLng == null ? null : it.gpsLng,
+      gpsAccuracy: it.gpsAccuracy == null ? null : it.gpsAccuracy,
       moveToSite: it.moveToSite, moveDocNo: it.moveDocNo, moveDate: it.moveDate,
       note: it.note, unregistered: it.unregistered, unlistedDesc: it.unlistedDesc,
       verifiedAt: it.verifiedAt, photoPaths: [],
@@ -1613,6 +1616,23 @@ const App = (() => {
     Object.keys(logged).sort((a, b) => logged[b] - logged[a] || a.localeCompare(b, 'th')).forEach((v) => add(v));
     return rows;
   }
+  /** ปุ่มลัด "ใช้พื้นที่ล่าสุดของคุณ" — เสนอไว้ข้างช่อง ไม่ใช่เติมค่าลงไปเงียบๆ */
+  function showAreaSuggest(area) {
+    const btn = el('recLocSuggest');
+    if (!btn) return;
+    const v = String(area || '').trim();
+    btn.classList.toggle('hidden', !v);
+    if (v) {
+      btn.dataset.area = v;
+      btn.textContent = 'ใช้พื้นที่ล่าสุดของคุณ: ' + v;
+    }
+  }
+  function useLastArea() {
+    const btn = el('recLocSuggest');
+    if (!btn || !btn.dataset.area) return;
+    el('recLocation').value = btn.dataset.area;
+    btn.classList.add('hidden');
+  }
   function openAreaPicker(targetId) {
     state.areaPick = { target: targetId, q: '' };
     el('areaPickSearch').value = '';
@@ -2276,6 +2296,23 @@ const App = (() => {
   }
 
   // ── ฟอร์มบันทึกผลตรวจ ──────────────────────────────────────────────────────
+  /**
+   * ปุ่มพิกัดของการบันทึกครั้งนั้น — กดแล้วเปิด Google Maps ตรงจุดที่ยืนตรวจจริง
+   * ครั้งไหนไม่ได้พิกัด (ปิด GPS / ในอาคารลึก) บอกให้รู้ด้วย ไม่ปล่อยให้เดา
+   */
+  function gpsChip(l) {
+    if (l.gpsLat == null || l.gpsLng == null) {
+      return '<span class="gps-none" title="การบันทึกครั้งนี้ไม่ได้พิกัด GPS">' +
+        icon('pin') + ' ไม่มีพิกัด</span>';
+    }
+    const lat = Number(l.gpsLat).toFixed(6);
+    const lng = Number(l.gpsLng).toFixed(6);
+    const acc = l.gpsAccuracy ? ' ±' + Math.round(l.gpsAccuracy) + ' ม.' : '';
+    return '<a class="gps-link" target="_blank" rel="noopener" ' +
+      'title="' + lat + ', ' + lng + acc + ' — เปิดใน Google Maps" ' +
+      'href="https://www.google.com/maps/search/?api=1&query=' + lat + ',' + lng + '">' +
+      icon('pin') + ' GPS' + acc + '</a>';
+  }
   function renderHistory(inv) {
     const items = allLogs().filter((l) => l.inventoryNumber === inv)
       .sort((a, b) => String(b.verifiedAt).localeCompare(String(a.verifiedAt)));
@@ -2296,6 +2333,7 @@ const App = (() => {
         photos.map((p, i) =>
           '<button type="button" class="photo-link" data-log="' + esc(l.logId) + '" data-i="' + i + '">' +
           icon('camera') + ' รูป ' + (i + 1) + '</button>').join('') +
+        gpsChip(l) +
         (l.pending ? '<span class="pending-sync">' + icon('clock') + ' รอส่ง' +
           (l.photoCount ? ' (' + l.photoCount + ' รูป)' : '') + '</span>' : '') +
         (l.pending && l.photoCount
@@ -2345,17 +2383,21 @@ const App = (() => {
     // ช่องเดียวจบ: พื้นที่ในทะเบียน = ตำแหน่งที่ตรวจ
     //  • ทะเบียนระบุไว้แล้ว → โชว์ค่านั้น แก้ได้ถ้าไม่ตรงของจริง
     //  • ทะเบียนยังไม่ระบุ → ใส่ "พื้นที่ล่าสุดที่คนนี้เพิ่งบันทึก" ไว้ให้ ไม่ต้องพิมพ์ใหม่ทุกชิ้น
+    // ทะเบียนยังไม่ระบุ = ปล่อยช่องว่างไว้ให้เห็นชัดว่า "ไม่มีพื้นที่" — ห้ามเติมค่าล่าสุดลงไปเอง
+    // (เดิมเติมให้ทันที ทำให้แยกไม่ออกว่ารายการนี้มีพื้นที่จริงหรือเป็นค่าที่ระบบเดา
+    //  แถมกดบันทึกแล้วค่านั้นถูกเขียนลงทะเบียนทั้งที่ผู้ใช้ไม่ได้ตั้งใจ)
     const areaNow = (asset.location || '').trim();
     const lastMine = lastAreaOfMine();
-    el('recLocation').value = areaNow || lastMine;
+    el('recLocation').value = areaNow;
+    el('recLocation').placeholder = areaNow ? '' : 'ยังไม่ระบุพื้นที่ — พิมพ์เอง หรือกดปุ่มหมุดเลือกจากรายการ';
     el('recLocLabel').textContent = areaNow
       ? 'พื้นที่ / ตำแหน่งที่ตรวจ (ทะเบียนระบุไว้ — แก้ได้ถ้าไม่ตรง)'
       : 'พื้นที่ / ตำแหน่งที่ตรวจ (ทะเบียนยังไม่ระบุ)';
     const codeNow = areaCodeOf(areaNow);
     el('recLocHint').textContent = areaNow
       ? (codeNow ? 'รหัสพื้นที่ ' + codeNow + ' · ' : '') + 'แก้แล้วบันทึก = อัปเดตพื้นที่ในทะเบียนให้ด้วย'
-      : (lastMine ? 'ใส่พื้นที่ล่าสุดที่คุณบันทึกไว้ให้แล้ว — แก้ได้ตามจริง บันทึกแล้วจะเติมลงทะเบียนให้'
-        : 'พิมพ์พื้นที่ได้เลย บันทึกแล้วระบบจะเติมลงทะเบียนให้');
+      : 'ทะเบียนรอบนี้ยังไม่ได้ระบุพื้นที่ของรายการนี้ — ระบุแล้วบันทึกจะเติมลงทะเบียนให้';
+    showAreaSuggest(areaNow ? '' : lastMine);
     renderAreaList();
     el('unlistedFields').classList.add('hidden');
     el('recForm').classList.toggle('hidden', !state.canWrite);
@@ -2380,7 +2422,9 @@ const App = (() => {
     resetRecForm();
     el('recLocLabel').textContent = 'พื้นที่ / ตำแหน่งที่พบ';
     el('recLocHint').textContent = '';
-    el('recLocation').value = lastAreaOfMine();
+    el('recLocation').value = '';
+    el('recLocation').placeholder = 'พื้นที่ที่เจอของชิ้นนี้';
+    showAreaSuggest(lastAreaOfMine());
     el('unlistedFields').classList.remove('hidden');
     el('unlInv').value = code || '';
     el('unlDesc').value = '';
@@ -4791,7 +4835,7 @@ const App = (() => {
     setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession,
     readMasterFile, confirmImport, cancelImport,
     setType, setView, setSearch, setCat, setStaff, setArea, setSort, setStatus, setSelectedArea,
-    openAreaPicker, closeAreaPicker, setAreaPickSearch, showMore,
+    openAreaPicker, closeAreaPicker, setAreaPickSearch, showMore, useLastArea,
     openQueuePanel, closeQueuePanel, retryQueue, dropQueueItem, dropAllQueue, setCountCustom,
     setMapWho, setMapRange, setMapArea,
     toggleColPicker, closeColPicker, toggleCol, pickAllCols, resetCols,
