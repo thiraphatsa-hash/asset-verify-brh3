@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.8.4';
+  const APP_VERSION = 'v2.8.5';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -1868,12 +1868,88 @@ const App = (() => {
     renderColPicker();
     renderList();
   }
+  /**
+   * ของนอกทะเบียน (ผู้ตรวจเจอหน้างานแต่ไม่มีในทะเบียนรอบนี้) — ไม่มีแถวในทะเบียนให้แสดง
+   * จึงรวมจาก log แทน: 1 รหัส = 1 การ์ด พร้อมทุกครั้งที่บันทึกของรหัสนั้น
+   */
+  function unlistedGroups() {
+    const by = new Map();
+    allLogs().filter((l) => l.unregistered).forEach((l) => {
+      const key = (l.inventoryNumber || '').trim() || '(ไม่ระบุรหัส)';
+      const g = by.get(key) || { inv: key, rows: [], latest: null, desc: '' };
+      g.rows.push(l);
+      if (isNewer(l, g.latest)) g.latest = l;
+      if (!g.desc && (l.unlistedDesc || '').trim()) g.desc = l.unlistedDesc.trim();
+      by.set(key, g);
+    });
+    let out = Array.from(by.values());
+    const ui = state.ui;
+    if (ui.area) {
+      out = ui.area === '__NONE__'
+        ? out.filter((g) => !(g.latest.locationText || '').trim())
+        : out.filter((g) => (g.latest.locationText || '').trim() === ui.area);
+    }
+    if (ui.q) {
+      const words = ui.q.toUpperCase().split(/\s+/).filter(Boolean);
+      out = out.filter((g) => {
+        const hay = [g.inv, g.desc, g.latest.inspector, g.latest.locationText, g.latest.note]
+          .join(' ').toUpperCase();
+        return words.every((w) => hay.indexOf(w) >= 0);
+      });
+    }
+    out.sort((a, b) => (ui.sort === 'time'
+      ? String(b.latest.verifiedAt).localeCompare(String(a.latest.verifiedAt))
+      : String(a.inv).localeCompare(String(b.inv))));
+    return out;
+  }
+  function renderUnlistedList() {
+    const groups = unlistedGroups();
+    const shown = groups.slice(0, state.ui.limit);
+    const more = groups.length - shown.length;
+    el('counter').textContent = 'นอกทะเบียน ' + groups.length + ' รหัส (' +
+      groups.reduce((n, g) => n + g.rows.length, 0) + ' ครั้ง)';
+    el('tableWrap').classList.add('hidden');
+    el('cardWrap').classList.remove('hidden');
+    el('cardWrap').innerHTML = shown.map((g) => {
+      const latest = state.latest.get(g.inv) || g.latest;
+      const cls = classify(latest);
+      return '<div class="asset-row unl-row st-' + cls + '" data-unl="' + esc(g.inv) + '">' +
+        '<div class="asset-row-top"><span class="asset-inv mono">' + esc(g.inv) + '</span>' +
+          '<span class="type-badge t-unlisted">นอกทะเบียน</span>' + statusCell(latest) + '</div>' +
+        '<div class="asset-desc">' + esc(g.desc || '(ไม่ได้ระบุรายละเอียด)') + '</div>' +
+        '<div class="asset-meta">' + icon('clock') + ' ' + esc(thaiDT(latest.verifiedAt)) + ' · ' +
+          esc(latest.inspector || '') + ' · ' + esc(latest.method || '') +
+          (latest.locationText ? ' · ' + icon('pin') + ' ' + esc(latest.locationText) : '') +
+          (g.rows.length > 1 ? ' · บันทึก ' + g.rows.length + ' ครั้ง' : '') +
+          (latest.pending ? ' · <b class="pending-sync">รอส่ง</b>' : '') + '</div>' +
+        (latest.note ? '<div class="asset-meta">' + icon('note') + ' ' + esc(latest.note) + '</div>' : '') +
+        '<div class="asset-meta unl-actions">' +
+          (photoCountOf(latest)
+            ? '<button type="button" class="photo-chip" data-log="' + esc(latest.logId) + '">' +
+              icon('camera') + ' ดูรูป (' + photoCountOf(latest) + ')</button>'
+            : '') + gpsChip(latest) + '</div>' +
+        '</div>';
+    }).join('') + (more ? '<div id="moreRow" class="more-row">' + moreButton(shown.length, groups.length) + '</div>' : '')
+      || '<p class="empty-note">ยังไม่มีการบันทึกของนอกทะเบียนในรอบนี้</p>';
+    updateBulkBar();
+  }
+  /** เปิดดูรายละเอียดของนอกทะเบียน: ประวัติทุกครั้งที่บันทึก + บันทึกเพิ่มได้จากหน้าเดียวกัน */
+  function openUnlistedDetail(code) {
+    const g = unlistedGroups().find((x) => x.inv === code);
+    openUnlisted(code === '(ไม่ระบุรหัส)' ? '' : code, 'MANUAL');
+    if (!g) return;
+    el('recTitle').textContent = g.inv;
+    el('unlDesc').value = g.desc || '';
+    el('recSub').textContent = 'ของนอกทะเบียน — บันทึกไว้แล้ว ' + g.rows.length + ' ครั้ง';
+    renderHistory(g.inv);
+  }
   function renderList() {
     if (!state.activeSession) {
       el('assetTbody').innerHTML = '';
       el('cardWrap').innerHTML = '';
       return;
     }
+    if (state.ui.status === 'unlisted') return renderUnlistedList();
     const all = filteredAssets();
     let done = 0;
     all.forEach((a) => {
@@ -2067,6 +2143,8 @@ const App = (() => {
   function setStatus(v) {
     state.ui.status = v;
     resetLimit();
+    // ของนอกทะเบียนไม่มีแถวในทะเบียนให้ทำงานเป็นชุด — ล้างรายการที่ติ๊กไว้กันสับสน
+    if (v === 'unlisted') state.selection.clear();
     document.querySelectorAll('#statusChips .chip').forEach((c) => {
       c.classList.toggle('active', c.dataset.status === v);
     });
@@ -2405,7 +2483,6 @@ const App = (() => {
     startGps();
   }
   function openUnlisted(code, method) {
-    if (!state.canWrite) return;
     if (!state.activeSession) return toast('เลือกรอบตรวจก่อน', 'warn');
     state.rec = {
       mode: 'unlisted', asset: null, method: method || 'MANUAL',
@@ -2428,10 +2505,10 @@ const App = (() => {
     el('unlistedFields').classList.remove('hidden');
     el('unlInv').value = code || '';
     el('unlDesc').value = '';
-    el('recForm').classList.remove('hidden');
+    el('recForm').classList.toggle('hidden', !state.canWrite);   // ผู้ดูอย่างเดียวก็เปิดดูได้
     el('recordModal').classList.remove('hidden');
-    startGps();
-    if (!code) setTimeout(() => el('unlInv').focus(), 150);
+    if (state.canWrite) startGps();
+    if (!code && state.canWrite) setTimeout(() => el('unlInv').focus(), 150);
   }
   function resetRecForm() {
     document.querySelectorAll('#resultSeg .seg').forEach((s) => s.classList.remove('active'));
@@ -4769,8 +4846,11 @@ const App = (() => {
     el('cardWrap').addEventListener('click', (ev) => {
       const ph = ev.target.closest('.photo-chip');
       if (ph) { ev.stopPropagation(); return openPhotos(ph.dataset.log); }
+      if (ev.target.closest('.gps-link')) return;      // ปล่อยให้ลิงก์เปิด Google Maps ตามปกติ
       const row = ev.target.closest('.asset-row');
-      if (row) openAsset(row.dataset.inv);
+      if (!row) return;
+      if (row.dataset.unl) return openUnlistedDetail(row.dataset.unl);
+      openAsset(row.dataset.inv);
     });
     el('dashContent').addEventListener('click', (ev) => {
       const coll = ev.target.closest('.collapse-head');

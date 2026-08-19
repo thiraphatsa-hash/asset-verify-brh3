@@ -510,6 +510,10 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 .asset-desc { font-size: 14px; }
 .asset-meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 3px 9px; }
 .empty-note { text-align: center; color: var(--muted); padding: 26px 10px; font-size: 14px; }
+/* การ์ดของนอกทะเบียน — ไม่มีแถวในทะเบียน จึงใช้เส้นประบอกว่าเป็นของนอกรายการ */
+.unl-row { border-left-color: var(--dmg); border-style: dashed; }
+.unl-row .type-badge { flex: none; }
+.unl-actions { margin-top: 2px; align-items: center; }
 
 /* ── ป้ายสถานะ ──────────────────────────────────────────────────────────── */
 .pill, .stat-chip {
