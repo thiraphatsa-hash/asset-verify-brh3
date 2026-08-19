@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.9.0';
+  const APP_VERSION = 'v2.9.1';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -4424,7 +4424,20 @@ const App = (() => {
           put(r + 1 + i, 5, l.locationText || '');
           put(r + 1 + i, 6, l.note || '');
         });
+        r += unlistedList.length + 2;
       }
+      // วิธีเปิดแผนที่ด้วยฟังก์ชันของ Excel เอง (ข้อมูลเตรียมไว้ให้พร้อมใช้แล้ว)
+      const gpsCount = logsAll.filter((l) => l.gpsLat != null && l.gpsLng != null).length;
+      put(r, 1, 'ดูแผนที่จุดที่ตรวจด้วย Excel', true).font = { name: 'Tahoma', size: 12, bold: true };
+      [
+        'ชีท "ประวัติการตรวจทั้งหมด" เป็นตาราง Excel ชื่อ AssetVerifyLog มีคอลัมน์ Latitude / Longitude ' +
+          'เป็นตัวเลขพร้อมใช้ (มีพิกัด ' + gpsCount + ' รายการ)',
+        '1) คลิกเซลล์ใดก็ได้ในตารางของชีทนั้น  2) เมนู Insert (แทรก) → 3D Map (แผนที่ 3 มิติ) → Open 3D Maps',
+        '3) Excel จับคู่ Latitude/Longitude ให้เอง — เลือก Category เป็นคอลัมน์ "ผล" เพื่อให้สีหมุดแยกตามผลการตรวจ',
+        'หมายเหตุ: ปุ่ม Insert → Maps (Filled Map) ใช้ได้กับ "ชื่อพื้นที่" เช่น จังหวัด/ประเทศ เท่านั้น ' +
+          'ไม่รองรับพิกัด GPS จึงต้องใช้ 3D Map',
+        'ถ้าต้องการเปิดทีละจุด: คอลัมน์ "เปิดใน Google Maps" ในชีทเดียวกันกดได้เลย'
+      ].forEach((t, i) => { put(r + 1 + i, 1, t).alignment = { wrapText: false }; });
 
       // ══ ชีท 2: ทรัพย์สิน Fixed Assets (ฟอร์มเดิม + คอลัมน์เสริม) ══
       const fixedRows = state.master.filter((a) => a.assetType === 'FIXED').map((a, i) => {
@@ -4499,43 +4512,75 @@ const App = (() => {
       // ══ ชีท 4: รูปถ่ายยืนยัน (ฝังรูปจริง โครงเดียวกับ MCR) ══
       await buildPhotoSheet(wb, logsAll);
 
-      // ══ ชีท 5: แผนที่จุดที่ตรวจ (ภาพแผนที่ + ตารางพิกัด) ══
-      await buildMapSheet(wb, logsAll);
-
-      // ══ ชีท 6: ประวัติการตรวจทั้งหมด ══
+      // ══ ชีท 5: ประวัติการตรวจทั้งหมด ══
+      // เป็น "ตาราง Excel" จริง (AssetVerifyLog) และแยกพิกัดเป็น Latitude/Longitude ตัวเลข
+      // เพื่อให้ใช้ฟังก์ชันแผนที่ของ Excel เอง (Insert → 3D Map) ได้ทันทีโดยไม่ต้องแต่งข้อมูลก่อน
       const hist = wb.addWorksheet('ประวัติการตรวจทั้งหมด', {
         views: [{ state: 'frozen', ySplit: 1 }]
       });
       const histHead = ['เวลาที่บันทึก', 'RT code', 'ชิ้นที่', 'ประเภท', 'ผล', 'วิธี', 'ผู้บันทึก',
-        'ตำแหน่งที่ตรวจ', 'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', 'GPS', 'หมายเหตุ',
+        'ตำแหน่งที่ตรวจ', 'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', 'Latitude', 'Longitude',
+        'ความแม่นยำ (ม.)', 'เปิดใน Google Maps', 'หมายเหตุ',
         'นอกทะเบียน', 'คำอธิบายนอกทะเบียน', 'จำนวนรูป', 'สถานะส่ง'];
-      [20, 19, 7, 12, 14, 9, 22, 20, 12, 13, 13, 20, 30, 10, 26, 9, 10]
+      [20, 19, 7, 12, 14, 9, 22, 20, 12, 13, 13, 12, 12, 14, 18, 30, 10, 26, 9, 10]
         .forEach((w, i) => { hist.getColumn(i + 1).width = w; });
-      histHead.forEach((h, i) => {
-        const cell = hist.getCell(1, i + 1);
-        cell.value = h;
-        styleHeadCell(cell);
-      });
-      logsAll.slice().sort((a, b) => String(a.verifiedAt).localeCompare(String(b.verifiedAt)))
-        .forEach((l, i) => {
-          const row = [thaiDT(l.verifiedAt), l.inventoryNumber, Number(l.pieceNo) || 1,
+      const histRows = logsAll.slice()
+        .sort((a, b) => String(a.verifiedAt).localeCompare(String(b.verifiedAt)))
+        .map((l, i) => {
+          const rr = 2 + i;
+          const hasGps = l.gpsLat != null && l.gpsLng != null &&
+            !isNaN(Number(l.gpsLat)) && !isNaN(Number(l.gpsLng));
+          return [thaiDT(l.verifiedAt), l.inventoryNumber, Number(l.pieceNo) || 1,
             l.assetType === 'RENTAL' ? 'ของเช่า' : (l.assetType === 'UNLISTED' ? 'นอกทะเบียน' : 'Fixed'),
             statusLabel(l), l.method, l.inspector || '', l.locationText || '',
             l.moveToSite || '', l.moveDocNo || '', l.moveDate ? thaiD(l.moveDate) : '',
-            l.gpsLat != null ? l.gpsLat + ',' + l.gpsLng : '', l.note || '',
-            l.unregistered ? 'ใช่' : '', l.unlistedDesc || '',
+            hasGps ? Number(Number(l.gpsLat).toFixed(6)) : null,
+            hasGps ? Number(Number(l.gpsLng).toFixed(6)) : null,
+            hasGps && l.gpsAccuracy ? Math.round(l.gpsAccuracy) : null,
+            // สูตรอ้างเซลล์พิกัดของแถวเดียวกัน — แก้พิกัดเมื่อไร ลิงก์เปลี่ยนตาม
+            hasGps ? { formula: 'HYPERLINK("https://www.google.com/maps/search/?api=1&query="&L' +
+              rr + '&","&M' + rr + ',"เปิดแผนที่")', result: 'เปิดแผนที่' } : null,
+            l.note || null, l.unregistered ? 'ใช่' : null, l.unlistedDesc || null,
             (l.photoPaths || []).length || l.photoCount || 0,
             l.pending ? 'รอส่ง' : 'ส่งแล้ว'];
-          row.forEach((v, c) => {
-            const cell = hist.getCell(2 + i, c + 1);
-            cell.value = v === '' ? null : v;
-            cell.font = { name: 'Tahoma', size: 9 };
-            cell.border = BORDER;
-          });
         });
-      hist.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: histHead.length } };
+      // เขียนเป็น "ตาราง Excel" ชื่อ AssetVerifyLog — Excel รู้ขอบเขตข้อมูลเอง
+      // ทำให้ Insert → 3D Map / PivotTable หยิบไปใช้ได้ทันที
+      let tableOk = false;
+      try {
+        hist.addTable({
+          name: 'AssetVerifyLog', displayName: 'AssetVerifyLog',
+          ref: 'A1', headerRow: true,
+          style: { theme: 'TableStyleLight8', showRowStripes: true },
+          columns: histHead.map((h) => ({ name: h, filterButton: true })),
+          rows: histRows
+        });
+        tableOk = true;
+      } catch (e) { tableOk = false; }
+      if (!tableOk) {                       // ExcelJS รุ่นที่ไม่รองรับ table → เขียนแบบเดิม
+        histHead.forEach((h, i) => { styleHeadCell(hist.getCell(1, i + 1)).value = h; });
+        histRows.forEach((row, i) => {
+          row.forEach((v, c) => { hist.getCell(2 + i, c + 1).value = v === '' ? null : v; });
+        });
+        hist.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: histHead.length } };
+      }
+      for (let i = 0; i <= histRows.length; i++) {
+        const rr = 1 + i;
+        for (let c = 1; c <= histHead.length; c++) {
+          const cell = hist.getCell(rr, c);
+          cell.font = rr === 1
+            ? { name: 'Tahoma', size: 9, bold: true }
+            : { name: 'Tahoma', size: 9 };
+          cell.border = BORDER;
+        }
+        if (rr > 1) {
+          hist.getCell(rr, 12).numFmt = '0.000000';
+          hist.getCell(rr, 13).numFmt = '0.000000';
+          hist.getCell(rr, 15).font = { name: 'Tahoma', size: 9, color: { argb: 'FF1B3A6B' }, underline: true };
+        }
+      }
 
-      // ══ ชีท 7: นับจำนวนตามหมวด (เฉพาะเมื่อมีการนับ) ══
+      // ══ ชีท 6: นับจำนวนตามหมวด (เฉพาะเมื่อมีการนับ) ══
       const countsAll = allCounts();
       if (countsAll.length) {
         const cnt = wb.addWorksheet('นับจำนวนตามหมวด', { views: [{ state: 'frozen', ySplit: 1 }] });
@@ -4604,188 +4649,6 @@ const App = (() => {
   }
 
   /** ชีทรูปถ่าย: ฝังรูปจริงลงไฟล์ (โครงเดียวกับชีท "รูปถ่ายยืนยัน" ของ MCR) */
-  // ── ชีทแผนที่ในไฟล์ Excel ───────────────────────────────────────────────────
-  // Excel วางแผนที่สดไม่ได้ จึง "วาดภาพแผนที่" เองจากไทล์ OpenStreetMap ชุดเดียวกับ
-  // ที่หน้า Dashboard ใช้ แล้วปักหมุดตามผลตรวจ ก่อนฝังเป็นรูปลงชีท
-  // (ต้องออนไลน์ตอน export ถ้าโหลดไทล์ไม่ได้ ยังได้ตารางพิกัด + ลิงก์ Google Maps ครบ)
-  const TILE_PX = 256;
-  const MAP_W = 1120;
-  const MAP_H = 700;
-  const lonToX = (lon, z) => (lon + 180) / 360 * Math.pow(2, z);
-  const latToY = (lat, z) => {
-    const r = lat * Math.PI / 180;
-    return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z);
-  };
-  function loadTile(url) {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';          // ต้องมี ไม่งั้น canvas โดน taint แล้วดึงรูปออกไม่ได้
-      const done = (v) => { img.onload = img.onerror = null; resolve(v); };
-      const timer = setTimeout(() => done(null), 8000);
-      img.onload = () => { clearTimeout(timer); done(img); };
-      img.onerror = () => { clearTimeout(timer); done(null); };
-      img.src = url;
-    });
-  }
-  /** วาดภาพแผนที่ + หมุด คืน base64 (null = วาดไม่ได้ เช่นออฟไลน์) */
-  async function renderMapImage(points) {
-    if (!points.length || !navigator.onLine) return null;
-    const lats = points.map((p) => p.lat);
-    const lngs = points.map((p) => p.lng);
-    const bounds = { n: Math.max.apply(null, lats), s: Math.min.apply(null, lats),
-      e: Math.max.apply(null, lngs), w: Math.min.apply(null, lngs) };
-    // เลือกระดับซูมที่ใหญ่สุดที่ยังใส่จุดทั้งหมดลงในภาพได้ (เว้นขอบ 80px)
-    let z = 18;
-    for (; z > 2; z--) {
-      const w = (lonToX(bounds.e, z) - lonToX(bounds.w, z)) * TILE_PX;
-      const h = (latToY(bounds.s, z) - latToY(bounds.n, z)) * TILE_PX;
-      if (w <= MAP_W - 80 && h <= MAP_H - 80) break;
-    }
-    const cx = (lonToX(bounds.w, z) + lonToX(bounds.e, z)) / 2;
-    const cy = (latToY(bounds.n, z) + latToY(bounds.s, z)) / 2;
-    const originX = cx * TILE_PX - MAP_W / 2;      // พิกัดพิกเซลมุมซ้ายบนของภาพ
-    const originY = cy * TILE_PX - MAP_H / 2;
-    const canvas = document.createElement('canvas');
-    canvas.width = MAP_W;
-    canvas.height = MAP_H;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#E8E4DC';
-    ctx.fillRect(0, 0, MAP_W, MAP_H);
-    const x0 = Math.floor(originX / TILE_PX);
-    const y0 = Math.floor(originY / TILE_PX);
-    const x1 = Math.floor((originX + MAP_W) / TILE_PX);
-    const y1 = Math.floor((originY + MAP_H) / TILE_PX);
-    const max = Math.pow(2, z);
-    const jobs = [];
-    for (let tx = x0; tx <= x1; tx++) {
-      for (let ty = y0; ty <= y1; ty++) {
-        if (ty < 0 || ty >= max) continue;
-        const wrapX = ((tx % max) + max) % max;
-        jobs.push({ tx: tx, ty: ty, url: 'https://tile.openstreetmap.org/' + z + '/' + wrapX + '/' + ty + '.png' });
-      }
-    }
-    let ok = 0;
-    for (let i = 0; i < jobs.length; i++) {
-      busy('กำลังวาดแผนที่ ' + (i + 1) + ' / ' + jobs.length + '...');
-      const img = await loadTile(jobs[i].url);
-      if (!img) continue;
-      ok++;
-      ctx.drawImage(img, jobs[i].tx * TILE_PX - originX, jobs[i].ty * TILE_PX - originY, TILE_PX, TILE_PX);
-    }
-    if (!ok) return null;
-    // หมุด: สีเดียวกับแผนที่ในหน้า Dashboard
-    points.forEach((p) => {
-      const px = lonToX(p.lng, z) * TILE_PX - originX;
-      const py = latToY(p.lat, z) * TILE_PX - originY;
-      ctx.beginPath();
-      ctx.arc(px, py, 7, 0, Math.PI * 2);
-      ctx.fillStyle = p.color;
-      ctx.globalAlpha = 0.85;
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.stroke();
-    });
-    // คำอธิบายสัญลักษณ์ + เครดิตแผนที่ (ตามเงื่อนไขการใช้ไทล์ OSM)
-    const keys = Object.keys(RESULT_PIN);
-    ctx.fillStyle = 'rgba(255,255,255,.88)';
-    ctx.fillRect(10, 10, 150, 24 + keys.length * 22);
-    ctx.strokeStyle = '#B9B4AA';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(10, 10, 150, 24 + keys.length * 22);
-    ctx.font = 'bold 13px sans-serif';
-    ctx.fillStyle = '#2A2E36';
-    ctx.fillText('ผลการตรวจ', 20, 30);
-    ctx.font = '13px sans-serif';
-    keys.forEach((k, i) => {
-      const y = 50 + i * 22;
-      ctx.beginPath();
-      ctx.arc(27, y - 4, 7, 0, Math.PI * 2);
-      ctx.fillStyle = RESULT_PIN[k].color;
-      ctx.fill();
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.fillStyle = '#2A2E36';
-      ctx.fillText(RESULT_PIN[k].label, 42, y);
-    });
-    ctx.font = '11px sans-serif';
-    const credit = '© OpenStreetMap contributors';
-    const cw = ctx.measureText(credit).width + 10;
-    ctx.fillStyle = 'rgba(255,255,255,.85)';
-    ctx.fillRect(MAP_W - cw - 6, MAP_H - 22, cw + 6, 18);
-    ctx.fillStyle = '#3A3A3A';
-    ctx.fillText(credit, MAP_W - cw, MAP_H - 9);
-    // JPEG คุณภาพสูง — ภาพแผนที่เป็น PNG จะหนักเกิน 1 MB ต่อไฟล์รายงาน
-    return canvas.toDataURL('image/jpeg', 0.88).split(',').pop();
-  }
-  async function buildMapSheet(wb, logsAll) {
-    const points = logsAll
-      .filter((l) => l.gpsLat != null && l.gpsLng != null &&
-        !isNaN(Number(l.gpsLat)) && !isNaN(Number(l.gpsLng)))
-      .map((l) => ({
-        log: l, lat: Number(l.gpsLat), lng: Number(l.gpsLng),
-        color: (RESULT_PIN[classify(l)] || { color: '#6B6B6B' }).color
-      }))
-      .sort((a, b) => String(a.log.verifiedAt).localeCompare(String(b.log.verifiedAt)));
-    if (!points.length) return null;
-
-    const ws = wb.addWorksheet('แผนที่จุดที่ตรวจ');
-    [7, 19, 30, 13, 20, 18, 20, 13, 13, 12, 16]
-      .forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-    ws.getCell(1, 1).value = 'แผนที่จุดที่บันทึกผลตรวจ';
-    ws.getCell(1, 1).font = { name: 'Tahoma', size: 12, bold: true };
-    const s = state.activeSession || {};
-    ws.getCell(2, 1).value = (s.site || '') + (s.roundName ? ' · ' + s.roundName : '') +
-      ' · มีพิกัด ' + points.length + ' รายการ · ออกไฟล์ ' + thaiDT(new Date().toISOString());
-    ws.getCell(2, 1).font = { name: 'Tahoma', size: 9 };
-
-    let tableTop = 4;
-    let base64 = null;
-    try { base64 = await renderMapImage(points); } catch (e) { base64 = null; }
-    if (base64) {
-      try {
-        const id = wb.addImage({ base64: base64, extension: 'jpeg' });
-        ws.addImage(id, { tl: { col: 0.2, row: 3.2 }, ext: { width: MAP_W, height: MAP_H } });
-        tableTop = 4 + Math.ceil(MAP_H / 19) + 2;      // เว้นที่ให้รูปก่อนขึ้นตาราง
-      } catch (e) { base64 = null; }
-    }
-    if (!base64) {
-      ws.getCell(3, 1).value = 'สร้างภาพแผนที่ไม่ได้ (ต้องออนไลน์ตอนกด Export) — ' +
-        'ตารางด้านล่างยังมีพิกัดครบ กดคอลัมน์สุดท้ายเพื่อเปิด Google Maps ได้';
-      ws.getCell(3, 1).font = { name: 'Tahoma', size: 9, color: { argb: 'FFB0402F' } };
-    }
-
-    const head = ['ลำดับ', 'RT code', 'ชื่อทรัพย์สิน', 'ผลตรวจ', 'ผู้บันทึก', 'เวลาที่บันทึก',
-      'ตำแหน่งที่ตรวจ', 'Latitude', 'Longitude', 'ความแม่นยำ (ม.)', 'เปิดแผนที่'];
-    head.forEach((h, i) => { styleHeadCell(ws.getCell(tableTop, i + 1)).value = h; });
-    points.forEach((p, i) => {
-      const l = p.log;
-      const asset = state.master.find((m) => m.inventoryNumber === l.inventoryNumber);
-      const vals = [i + 1, l.inventoryNumber,
-        asset ? (asset.description || '') : (l.unlistedDesc || '(นอกทะเบียน)'),
-        statusLabel(l), l.inspector || '', thaiDT(l.verifiedAt), l.locationText || '',
-        Number(p.lat.toFixed(6)), Number(p.lng.toFixed(6)),
-        l.gpsAccuracy ? Math.round(l.gpsAccuracy) : null];
-      vals.forEach((v, c) => {
-        const cell = ws.getCell(tableTop + 1 + i, c + 1);
-        cell.value = v === '' ? null : v;
-        cell.font = { name: 'Tahoma', size: 9 };
-        cell.border = BORDER;
-      });
-      const link = ws.getCell(tableTop + 1 + i, 11);
-      link.value = {
-        text: 'เปิดใน Google Maps',
-        hyperlink: 'https://www.google.com/maps/search/?api=1&query=' +
-          p.lat.toFixed(6) + ',' + p.lng.toFixed(6)
-      };
-      link.font = { name: 'Tahoma', size: 9, color: { argb: 'FF1B3A6B' }, underline: true };
-      link.border = BORDER;
-    });
-    ws.autoFilter = { from: { row: tableTop, column: 1 }, to: { row: tableTop, column: head.length } };
-    return ws;
-  }
   async function buildPhotoSheet(wb, logsAll) {
     // รูปที่ส่งขึ้นเซิร์ฟเวอร์แล้ว
     const items = [];
