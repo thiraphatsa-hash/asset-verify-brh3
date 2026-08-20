@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.9.1';
+  const APP_VERSION = 'v2.9.2';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -1011,6 +1011,8 @@ const App = (() => {
     renderSessions();
     if (state.page === 'dash') renderDash();
     if (state.page === 'activity') renderActivity();
+    // โหมดต่อเนื่องเปิดค้างอยู่ = ให้ตัวนับและรายการล่าสุดขยับตามของที่เพื่อนบันทึกเข้ามาด้วย
+    if (state.bulk.cats.length && !el('bulkModal').classList.contains('hidden')) updateBulkView();
     updateSyncChip();
   }
 
@@ -2789,8 +2791,11 @@ const App = (() => {
       afterDataChange();
       if (state.rec && state.rec.asset) renderHistory(state.rec.asset.inventoryNumber);
       toast('ลบแล้ว', 'success');
-    } catch (e) { toast(e.message, 'error'); }
-    finally { busyHide(); }
+    } catch (e) {
+      toast(isNetworkError(e.message)
+        ? 'ลบไม่ได้ตอนออฟไลน์ — ผลตรวจนี้ส่งขึ้นเซิร์ฟเวอร์ไปแล้ว ลองใหม่เมื่อเน็ตกลับมา'
+        : e.message, 'error');
+    } finally { busyHide(); }
   }
 
   // ── สแกน QR ────────────────────────────────────────────────────────────────
@@ -3222,7 +3227,7 @@ const App = (() => {
     el('bulkCatSearch').value = '';
     renderCatPicker();
     el('bulkLocation').value = lastAreaOfMine();
-    el('bulkLast').textContent = '';
+    el('bulkLast').innerHTML = '';
     el('bulkTail').value = '';
     state.bulk.busy = false;
     const auto = cacheGet('avBulkAuto');
@@ -3328,6 +3333,64 @@ const App = (() => {
       (state.bulk.count ? ' · รอบนี้ ' + state.bulk.count + ' รายการ' : '');
     updateCatLabel();
     updateTailHint();
+    renderBulkRecent();
+  }
+  const hhmm = (iso) => {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  };
+  /**
+   * รายการที่เพิ่งบันทึกในหมวดที่เลือก — โหมดต่อเนื่องพิมพ์เร็วมาก พิมพ์ผิดตัวเดียว
+   * ต้องเห็นและแก้ได้ตรงนั้นเลย ไม่ต้องปิดหน้าไปหาในตาราง
+   */
+  function bulkRecentLogs() {
+    const cats = state.bulk.cats;
+    if (!cats.length) return [];
+    return allLogs()
+      .filter((l) => cats.indexOf(catOf(l.inventoryNumber)) >= 0)
+      .sort((a, b) => String(b.verifiedAt).localeCompare(String(a.verifiedAt)))
+      .slice(0, 8);
+  }
+  function renderBulkRecent() {
+    const rows = bulkRecentLogs();
+    const me = inspectorName();
+    el('bulkLast').innerHTML = rows.length
+      ? '<p class="brec-head">' + icon('clock') + ' บันทึกล่าสุด — แตะที่เลขเพื่อใส่กลับในช่อง · ' +
+        icon('trash') + ' ลบเพื่อบันทึกใหม่</p>' +
+        rows.map((l) => {
+          const cls = classify(l);
+          return '<div class="brec">' +
+            '<button type="button" class="brec-main" data-code="' + esc(l.inventoryNumber) + '">' +
+              '<b class="mono">' + esc(l.inventoryNumber) + '</b>' +
+              '<span class="pill st-' + cls + '">' + esc(statusLabel(l)) + '</span>' +
+              '<small>' + esc(hhmm(l.verifiedAt)) +
+                (Number(l.pieceNo) > 1 ? ' · ชิ้นที่ ' + l.pieceNo : '') +
+                (l.inspector && l.inspector !== me ? ' · ' + esc(l.inspector) : '') +
+                (l.pending ? ' · รอส่ง' : '') + '</small>' +
+            '</button>' +
+            (canEditLog(l)
+              ? '<button type="button" class="brec-del" data-log="' + esc(l.logId) +
+                '" title="ลบรายการนี้">' + icon('trash') + '</button>'
+              : '') +
+            '</div>';
+        }).join('')
+      : '<p class="hint">ยังไม่มีการบันทึกในหมวดที่เลือก</p>';
+  }
+  /** ใส่เลขท้ายของรหัสกลับลงช่องกรอก เพื่อบันทึกซ้ำ/แก้ผลได้ทันที */
+  function bulkUseCode(code) {
+    const tail = String(code || '').split('-').slice(2).join('-');
+    if (!tail) return;
+    el('bulkTail').value = tail;
+    updateTailHint();
+    el('bulkTail').focus();
+  }
+  async function bulkDeleteLog(logId) {
+    const row = allLogs().find((l) => String(l.logId) === String(logId));
+    if (!row) return;
+    const code = row.inventoryNumber;
+    await deleteLogEntry(logId);                    // ถามยืนยัน + เช็คสิทธิ์ในตัว
+    updateBulkView();
+    if (!allLogs().some((l) => String(l.logId) === String(logId))) bulkUseCode(code);
   }
   /**
    * แปลงเลขท้ายเป็น RT code — รองรับเลือกหลายหมวดพร้อมกัน
@@ -3500,10 +3563,7 @@ const App = (() => {
     fillAreaIfEmpty([code], location);    // โหมดต่อเนื่อง = ยืนอยู่โซนเดียว เติมให้ที่ยังว่าง
     state.bulk.count++;
     afterDataChange();
-    updateBulkView();
-    el('bulkLast').innerHTML = icon('check') + ' ล่าสุด: <b class="mono">' + esc(code) + '</b>' +
-      (pieceNo > 1 ? ' <b>ชิ้นที่ ' + pieceNo + '</b>' : '') +
-      ' (' + RESULTS[state.bulk.resultKey].label + ') ' + thaiDT(new Date().toISOString());
+    updateBulkView();                     // รายการที่เพิ่งบันทึกจะขึ้นบนสุดของลิสต์เอง
     beep();
     tailEl.value = '';
     updateTailHint();
@@ -4939,6 +4999,12 @@ const App = (() => {
     el('areaPickList').addEventListener('click', (ev) => {
       const row = ev.target.closest('.area-row');
       if (row) chooseArea(row.dataset.area || '');
+    });
+    el('bulkLast').addEventListener('click', (ev) => {
+      const del = ev.target.closest('.brec-del');
+      if (del) return bulkDeleteLog(del.dataset.log);
+      const use = ev.target.closest('.brec-main');
+      if (use) bulkUseCode(use.dataset.code);
     });
     el('colPanel').addEventListener('click', (ev) => ev.stopPropagation());
     el('actList').addEventListener('click', (ev) => ev.stopPropagation());

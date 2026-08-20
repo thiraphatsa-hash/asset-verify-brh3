@@ -954,6 +954,26 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 .bulk-tail { letter-spacing: .08em; text-align: center; }
 .bulk-counter { margin-top: 12px; font-size: 14px; font-weight: 700; color: var(--accent); }
 .bulk-last { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+/* รายการที่เพิ่งบันทึกในโหมดต่อเนื่อง — แก้/ลบได้โดยไม่ต้องออกจากหน้า */
+.brec-head { margin: 10px 0 6px; font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 5px; }
+.brec-head .ic { width: 14px; height: 14px; }
+.brec {
+  display: flex; align-items: stretch; gap: 6px; margin-bottom: 5px;
+}
+.brec-main {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: var(--r); background: var(--surface);
+  color: var(--text); font-family: inherit; font-size: 13px; text-align: left;
+  padding: 7px 10px; cursor: pointer;
+}
+.brec-main:active { border-color: var(--accent); background: var(--accent-tint); }
+.brec-main b { font-size: 13.5px; }
+.brec-main small { color: var(--muted); font-size: 11.5px; margin-left: auto; }
+.brec-del {
+  flex: none; width: 40px; border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface); color: var(--no); cursor: pointer; display: grid; place-items: center;
+}
+.brec-del:active { background: var(--no-bg); border-color: var(--no); }
 
 /* ── เลือกคอลัมน์ที่จะแสดงในตาราง ───────────────────────────────────────── */
 #colPanel { margin-top: 8px; }
