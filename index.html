@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.9.4">
+  <link rel="stylesheet" href="styles.css?v=2.9.5">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -198,6 +198,7 @@
             <button id="colBtn" class="tool-button" type="button" onclick="App.toggleColPicker(event)"><span data-icon="columns"></span> คอลัมน์</button>
             <button class="tool-button" type="button" onclick="App.go('activity')"><span data-icon="history"></span> ประวัติการบันทึก</button>
             <button class="tool-button" type="button" onclick="App.exportExcel()"><span data-icon="download"></span> Excel</button>
+            <button class="tool-button" type="button" onclick="App.exportLayoutImage()"><span data-icon="image"></span> ผังดาวเทียม</button>
           </div>
           <div id="colPanel" class="combo-panel multi-panel hidden">
             <p id="colAutoNote" class="hint"></p>
@@ -268,7 +269,10 @@
             <p class="kicker">DASHBOARD</p>
             <h2 id="dashTitle">สรุปผลการตรวจ</h2>
           </div>
-          <button class="outline-button" type="button" onclick="App.exportExcel()"><span data-icon="download"></span> ดาวน์โหลด Excel</button>
+          <div class="dash-actions">
+            <button class="outline-button" type="button" onclick="App.exportLayoutImage()"><span data-icon="image"></span> ผังดาวเทียม (PNG)</button>
+            <button class="outline-button" type="button" onclick="App.exportExcel()"><span data-icon="download"></span> ดาวน์โหลด Excel</button>
+          </div>
         </div>
         <div id="dashContent"></div>
       </section>
@@ -654,9 +658,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.9.4" defer></script>
-  <script src="config.js?v=2.9.4"></script>
-  <script src="src/assetStore.js?v=2.9.4"></script>
-  <script src="app.js?v=2.9.4"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.9.5" defer></script>
+  <script src="config.js?v=2.9.5"></script>
+  <script src="src/assetStore.js?v=2.9.5"></script>
+  <script src="app.js?v=2.9.5"></script>
 </body>
 </html>

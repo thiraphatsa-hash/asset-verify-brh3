@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.9.4';
+  const APP_VERSION = 'v2.9.5';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -4378,6 +4378,522 @@ const App = (() => {
     return ws;
   }
 
+  // ══ ผังภาพถ่ายดาวเทียม — ไฟล์ PNG แยก สำหรับแนบรายงานหน้างาน ═══════════════
+  // พิกัด GPS เป็นองศา อ่านหน้างานไม่รู้เรื่อง จึงวางลงบนภาพถ่ายดาวเทียมจริง
+  // แล้วทับด้วยเส้นตารางช่อง (A1, C4, …) เผื่อภาพดาวเทียมเก่ากว่าสภาพไซต์ปัจจุบัน
+  const M_PER_DEG_LAT = 110540;
+  const SAT_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/';
+  const SAT_CREDIT = 'ภาพถ่ายดาวเทียม © Esri, Maxar, Earthstar Geographics';
+  const SAT_MAX_Z = 19;           // Esri World Imagery มีภาพถึงระดับนี้เป็นส่วนใหญ่
+  const SAT_TILE = 256;
+  const SAT_MAX_UPSCALE = 4;      // ขยายเกินนี้ภาพจะแตกจนดูไม่ออก ยอมเห็นพื้นที่รอบข้างกว้างขึ้นแทน
+  const SAT_MAX_TILES = 150;
+  const LAYOUT_CELL_SIZES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+  const LAYOUT_MAX_COLS = 18;
+  const LAYOUT_MAX_ROWS = 26;
+  const PIN_COLOR = { found: '#2E9E5B', moved: '#E08A1E', notfound: '#D24B3E', mixed: '#5B6B85' };
+  const PIN_TEXT = { found: 'พบ', moved: 'ย้ายออก', notfound: 'ไม่พบ', mixed: 'ปนกัน' };
+  const FONT = 'Tahoma, "Segoe UI", "Noto Sans Thai", sans-serif';
+  const layoutColLetter = (i) => String.fromCharCode(65 + i);
+  function layoutMedian(arr) {
+    if (!arr.length) return 0;
+    const a = arr.slice().sort((x, y) => x - y);
+    const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+  }
+  // พิกัด → พิกเซลของโลกทั้งใบที่ระดับซูม z (Web Mercator แบบเดียวกับ Google/Esri)
+  const mercX = (lng, z) => (lng + 180) / 360 * Math.pow(2, z) * SAT_TILE;
+  function mercY(lat, z) {
+    const s = Math.sin(lat * Math.PI / 180);
+    return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * Math.pow(2, z) * SAT_TILE;
+  }
+
+  /** บันทึกล่าสุดของแต่ละ "ชิ้น" ที่มีพิกัดใช้ได้จริง (1 ชิ้น = 1 จุดบนผัง) */
+  function gpsLatestPieces(logsAll) {
+    const map = new Map();
+    logsAll.forEach((l) => {
+      if (l.gpsLat == null || l.gpsLng == null) return;
+      const lat = Number(l.gpsLat);
+      const lng = Number(l.gpsLng);
+      if (!isFinite(lat) || !isFinite(lng)) return;
+      if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+      if (lat === 0 && lng === 0) return;
+      const key = l.inventoryNumber + '#' + (Number(l.pieceNo) > 0 ? Number(l.pieceNo) : 1);
+      const cur = map.get(key);
+      if (!cur || isNewer(l, cur)) map.set(key, l);
+    });
+    return Array.from(map.values());
+  }
+
+  /** โมเดลผัง: ฉายพิกัดลงระนาบเมตร ตัดจุดหลงทาง แล้วเลือกขนาดช่องอัตโนมัติ */
+  function buildLayoutModel(logsAll) {
+    const pts = gpsLatestPieces(logsAll);
+    if (!pts.length) return null;
+    const lat0 = layoutMedian(pts.map((l) => Number(l.gpsLat)));
+    const lng0 = layoutMedian(pts.map((l) => Number(l.gpsLng)));
+    const mPerLng = 111320 * Math.cos(lat0 * Math.PI / 180) || 111320;
+    const byInv = new Map();
+    state.master.forEach((a) => { byInv.set(a.inventoryNumber, a); });
+    const items = pts.map((l) => ({
+      log: l, asset: byInv.get(l.inventoryNumber) || null,
+      lat: Number(l.gpsLat), lng: Number(l.gpsLng),
+      cx: (Number(l.gpsLng) - lng0) * mPerLng,
+      cy: (Number(l.gpsLat) - lat0) * M_PER_DEG_LAT,
+      acc: Number(l.gpsAccuracy) || 0,
+      grp: classify(l)
+    }));
+    // จุดที่พิกัดเพี้ยน (จับดาวเทียมไม่ทัน) จะดึงผังให้กว้างจนอ่านไม่ออก → กันออกจากขอบเขตผัง
+    const dist = items.map((it) => Math.sqrt(it.cx * it.cx + it.cy * it.cy));
+    const limit = Math.max(150, layoutMedian(dist) * 4);
+    items.forEach((it, i) => { it.far = dist[i] > limit; });
+    const base = items.filter((it) => !it.far);
+    const use = base.length ? base : items;
+    if (!base.length) items.forEach((it) => { it.far = false; });
+    const xs = use.map((it) => it.cx);
+    const ys = use.map((it) => it.cy);
+    const minX = Math.min.apply(null, xs);
+    const minY = Math.min.apply(null, ys);
+    const spanX = Math.max.apply(null, xs) - minX;
+    const spanY = Math.max.apply(null, ys) - minY;
+    // ช่องเล็กกว่า 5 ม. ไม่มีความหมาย เพราะ GPS มือถือคลาดเคลื่อนมากกว่านั้นอยู่แล้ว
+    const sizes = LAYOUT_CELL_SIZES.filter((v) => v >= 5);
+    let cell = sizes[sizes.length - 1];
+    for (let i = 0; i < sizes.length; i++) {
+      if (Math.floor(spanX / sizes[i]) + 1 <= LAYOUT_MAX_COLS &&
+          Math.floor(spanY / sizes[i]) + 1 <= LAYOUT_MAX_ROWS) { cell = sizes[i]; break; }
+    }
+    const model = {
+      items: items, cell: cell, lat0: lat0, lng0: lng0, mPerLng: mPerLng,
+      minX: minX, minY: minY, spanX: spanX, spanY: spanY,
+      cols: Math.min(LAYOUT_MAX_COLS, Math.floor(spanX / cell) + 1),
+      rows: Math.min(LAYOUT_MAX_ROWS, Math.floor(spanY / cell) + 1),
+      originLat: lat0 + minY / M_PER_DEG_LAT,      // มุมล่างซ้ายของผัง = ช่อง A แถวล่างสุด
+      originLng: lng0 + minX / mPerLng,
+      farCount: items.filter((it) => it.far).length,
+      accAvg: Math.round(use.reduce((n, it) => n + it.acc, 0) / use.length)
+    };
+    items.forEach((it) => {
+      it.ref = it.far ? 'นอกผัง' : layoutRefOf(model, it.lat, it.lng);
+    });
+    return model;
+  }
+
+  /** ช่องผังของพิกัดหนึ่ง ๆ เช่น "C4" */
+  function layoutRefOf(model, lat, lng) {
+    const X = (lng - model.lng0) * model.mPerLng - model.minX;
+    const Y = (lat - model.lat0) * M_PER_DEG_LAT - model.minY;
+    const ci = Math.floor(X / model.cell);
+    const ri = Math.floor((model.spanY - Y) / model.cell);
+    if (ci < 0 || ci >= model.cols || ri < 0 || ri >= model.rows) return 'นอกผัง';
+    return layoutColLetter(ci) + (ri + 1);
+  }
+  /** พิกัดของเส้นตารางแนวตั้งเส้นที่ i และแนวนอนเส้นที่ j (นับจากมุมล่างซ้าย) */
+  const gridLng = (m, i) => m.originLng + (i * m.cell) / m.mPerLng;
+  const gridLat = (m, j) => m.originLat + (j * m.cell) / M_PER_DEG_LAT;
+
+  function loadTileImage(url) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';        // ต้องมี ไม่งั้น canvas โดนล็อกจนบันทึกรูปไม่ได้
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);    // ไทล์ไหนโหลดไม่ได้ก็ปล่อยว่าง ไม่ล้มทั้งผัง
+      img.src = url;
+    });
+  }
+
+  /** รวมจุดที่อยู่ใกล้กันเกินกว่าจะวาดหมุดแยกได้ ให้เป็นหมุดเดียวที่มีหลายรายการ */
+  function clusterPins(items, toPx, minGap) {
+    const out = [];
+    items.forEach((it) => {
+      const p = toPx(it.lat, it.lng);
+      let hit = null;
+      for (let i = 0; i < out.length && !hit; i++) {
+        if (Math.hypot(out[i].x - p[0], out[i].y - p[1]) < minGap) hit = out[i];
+      }
+      if (hit) {
+        hit.items.push(it);
+        hit.x = (hit.x * (hit.items.length - 1) + p[0]) / hit.items.length;
+        hit.y = (hit.y * (hit.items.length - 1) + p[1]) / hit.items.length;
+      } else {
+        out.push({ x: p[0], y: p[1], items: [it] });
+      }
+    });
+    out.forEach((c) => {
+      const kinds = {};
+      c.items.forEach((it) => { kinds[it.grp] = 1; });
+      const keys = Object.keys(kinds);
+      c.grp = keys.length === 1 ? keys[0] : 'mixed';
+    });
+    // เรียงแบบอ่านหนังสือ บนลงล่าง–ซ้ายไปขวา เพื่อให้เลขหมุดไล่ตามสายตา
+    out.sort((a, b) => (Math.round(a.y / 60) - Math.round(b.y / 60)) || (a.x - b.x));
+    return out;
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  /** ป้ายตัวหนังสือบนภาพดาวเทียม ต้องมีพื้นทึบข้างหลังไม่งั้นอ่านไม่ออก */
+  function mapChip(ctx, x, y, text, size, align) {
+    ctx.font = '700 ' + size + 'px ' + FONT;
+    const w = ctx.measureText(text).width + size * 0.7;
+    const h = size * 1.55;
+    const left = align === 'center' ? x - w / 2 : x;
+    ctx.fillStyle = 'rgba(17,24,39,.72)';
+    roundRect(ctx, left, y, w, h, h / 2.6);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, left + w / 2, y + h / 2 + size * 0.05);
+  }
+  function fitText(ctx, text, max) {
+    if (ctx.measureText(text).width <= max) return text;
+    let t = text;
+    while (t.length > 1 && ctx.measureText(t + '…').width > max) t = t.slice(0, -1);
+    return t + '…';
+  }
+
+  async function exportLayoutImage() {
+    const s = state.activeSession;
+    if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
+    const model = buildLayoutModel(allLogs());
+    if (!model) {
+      return toast('รอบนี้ยังไม่มีบันทึกที่ติดพิกัด GPS จึงยังวาดผังไม่ได้ — ' +
+        'เปิดสิทธิ์ตำแหน่งบนมือถือก่อนบันทึก', 'warn', null, 6000);
+    }
+    try {
+      busy('กำลังเตรียมผัง...');
+      const PAD = 36;
+      const HEAD_H = 138;
+      const MAP_W = 1500;
+      const MAP_H = 1180;
+      const PANEL_W = 700;
+      const GAP = 26;
+      const FOOT_H = 92;
+
+      // ── กรอบพื้นที่ที่จะแสดง: ขอบเขตผัง + เผื่อขอบ 12% ──
+      const padX = Math.max(model.spanX * 0.12, model.cell * 0.6);
+      const padY = Math.max(model.spanY * 0.12, model.cell * 0.6);
+      const west = model.originLng - padX / model.mPerLng;
+      const east = gridLng(model, model.cols) + padX / model.mPerLng;
+      const south = model.originLat - padY / M_PER_DEG_LAT;
+      const north = gridLat(model, model.rows) + padY / M_PER_DEG_LAT;
+
+      let z = SAT_MAX_Z;
+      for (; z > 2; z--) {
+        if (Math.abs(mercX(east, z) - mercX(west, z)) <= MAP_W &&
+            Math.abs(mercY(north, z) - mercY(south, z)) <= MAP_H) break;
+      }
+      const boxW = Math.abs(mercX(east, z) - mercX(west, z));
+      const boxH = Math.abs(mercY(south, z) - mercY(north, z));
+      const scale = Math.min(MAP_W / Math.max(boxW, 1), MAP_H / Math.max(boxH, 1), SAT_MAX_UPSCALE);
+      const cxW = (mercX(west, z) + mercX(east, z)) / 2;
+      const cyW = (mercY(north, z) + mercY(south, z)) / 2;
+      const x0 = cxW - MAP_W / (2 * scale);
+      const y0 = cyW - MAP_H / (2 * scale);
+      const toPx = (lat, lng) => [(mercX(lng, z) - x0) * scale, (mercY(lat, z) - y0) * scale];
+
+      // หมุดทุกจุดต้องอยู่บนภาพเสมอ — ตัดได้แค่ "รายชื่อ" ข้างภาพเมื่อยาวเกินไป
+      const pins = clusterPins(model.items.filter((it) => !it.far), toPx, 46);
+      const shown = pins.slice(0, 240);
+
+      // ── ความสูงของแผงรายชื่อ กำหนดความสูงรูปทั้งใบ ──
+      const nCol = shown.length > 90 ? 3 : (shown.length > 30 ? 2 : 1);
+      const rowH = nCol === 1 ? 36 : (nCol === 2 ? 30 : 27);
+      const perCol = Math.ceil(shown.length / nCol);
+      const legendH = 236;
+      const panelH = legendH + perCol * rowH + (pins.length > shown.length ? 40 : 0) + 24;
+
+      const W = PAD * 2 + MAP_W + GAP + PANEL_W;
+      const H = PAD * 2 + HEAD_H + Math.max(MAP_H, panelH) + FOOT_H;
+      const cv = document.createElement('canvas');
+      cv.width = W;
+      cv.height = H;
+      const ctx = cv.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, W, H);
+
+      // ── ภาพถ่ายดาวเทียม ──
+      const mx = PAD;
+      const my = PAD + HEAD_H;
+      const tx0 = Math.floor(x0 / SAT_TILE);
+      const ty0 = Math.floor(y0 / SAT_TILE);
+      const tx1 = Math.floor((x0 + MAP_W / scale) / SAT_TILE);
+      const ty1 = Math.floor((y0 + MAP_H / scale) / SAT_TILE);
+      const jobs = [];
+      const nMax = Math.pow(2, z);
+      for (let ty = ty0; ty <= ty1; ty++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+          if (ty < 0 || ty >= nMax) continue;
+          jobs.push({ tx: ((tx % nMax) + nMax) % nMax, ty: ty, dx: tx, dy: ty });
+        }
+      }
+      if (jobs.length > SAT_MAX_TILES) jobs.length = SAT_MAX_TILES;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(mx, my, MAP_W, MAP_H);
+      ctx.clip();
+      ctx.fillStyle = '#20262e';
+      ctx.fillRect(mx, my, MAP_W, MAP_H);
+      let done = 0;
+      let missing = 0;
+      const step = 5;                        // โหลดทีละชุด กันเปิดพร้อมกันหลายสิบเส้น
+      for (let i = 0; i < jobs.length; i += step) {
+        busy('กำลังโหลดภาพถ่ายดาวเทียม ' + Math.min(i + step, jobs.length) + ' / ' + jobs.length + '...');
+        const batch = jobs.slice(i, i + step);
+        const imgs = await Promise.all(batch.map((j) =>
+          loadTileImage(SAT_URL + z + '/' + j.ty + '/' + j.tx)));
+        imgs.forEach((img, k) => {
+          done++;
+          if (!img) { missing++; return; }
+          const j = batch[k];
+          ctx.drawImage(img, mx + (j.dx * SAT_TILE - x0) * scale, my + (j.dy * SAT_TILE - y0) * scale,
+            SAT_TILE * scale + 1, SAT_TILE * scale + 1);
+        });
+      }
+      busy('กำลังวาดผัง...');
+      // ลดความจัดของภาพลงนิด ให้เส้นตารางและหมุดเด่นขึ้น
+      ctx.fillStyle = 'rgba(10,14,20,.18)';
+      ctx.fillRect(mx, my, MAP_W, MAP_H);
+
+      // ── เส้นตารางช่อง + ป้าย A.. / 1.. ──
+      const gp = (lat, lng) => { const p = toPx(lat, lng); return [mx + p[0], my + p[1]]; };
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255,255,255,.5)';
+      ctx.setLineDash([7, 6]);
+      for (let i = 0; i <= model.cols; i++) {
+        const a = gp(model.originLat, gridLng(model, i));
+        const b = gp(gridLat(model, model.rows), gridLng(model, i));
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+      }
+      for (let j = 0; j <= model.rows; j++) {
+        const a = gp(gridLat(model, j), model.originLng);
+        const b = gp(gridLat(model, j), gridLng(model, model.cols));
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.strokeStyle = 'rgba(255,255,255,.9)';
+      ctx.lineWidth = 2.5;
+      const c0 = gp(gridLat(model, model.rows), model.originLng);
+      const c1 = gp(model.originLat, gridLng(model, model.cols));
+      ctx.strokeRect(c0[0], c0[1], c1[0] - c0[0], c1[1] - c0[1]);
+      for (let i = 0; i < model.cols; i++) {
+        const p = gp(gridLat(model, model.rows), gridLng(model, i + 0.5));
+        mapChip(ctx, p[0], p[1] - 34, layoutColLetter(i), 20, 'center');
+      }
+      for (let j = 0; j < model.rows; j++) {
+        const p = gp(gridLat(model, model.rows - j - 0.5), model.originLng);
+        mapChip(ctx, p[0] - 56, p[1] - 15, String(j + 1), 20, 'center');
+      }
+
+      // ── หมุด ──
+      pins.forEach((c, i) => {
+        const x = mx + c.x;
+        const y = my + c.y;
+        ctx.beginPath();
+        ctx.arc(x, y, 21, 0, Math.PI * 2);
+        ctx.fillStyle = PIN_COLOR[c.grp] || PIN_COLOR.mixed;
+        ctx.fill();
+        ctx.lineWidth = 3.5;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 ' + (i + 1 > 99 ? 16 : 21) + 'px ' + FONT;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(i + 1), x, y + 1);
+        if (c.items.length > 1) {                 // ป้ายจำนวนชิ้นที่ซ้อนอยู่ในหมุดเดียว
+          ctx.beginPath();
+          ctx.arc(x + 17, y - 17, 12, 0, Math.PI * 2);
+          ctx.fillStyle = '#111827';
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '700 14px ' + FONT;
+          ctx.fillText('×' + c.items.length, x + 17, y - 16);
+        }
+      });
+
+      // ── แถบสเกล + ทิศเหนือ ──
+      const mPerPx = 156543.03392 * Math.cos(model.lat0 * Math.PI / 180) / Math.pow(2, z) / scale;
+      let barM = LAYOUT_CELL_SIZES[0];
+      LAYOUT_CELL_SIZES.forEach((v) => {
+        if (Math.abs(v / mPerPx - 190) < Math.abs(barM / mPerPx - 190)) barM = v;
+      });
+      const barPx = barM / mPerPx;
+      const bx = mx + 26;
+      const by = my + MAP_H - 44;
+      ctx.fillStyle = 'rgba(17,24,39,.72)';
+      roundRect(ctx, bx - 12, by - 26, barPx + 24, 52, 10);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(bx, by + 8); ctx.lineTo(bx, by); ctx.lineTo(bx + barPx, by);
+      ctx.lineTo(bx + barPx, by + 8);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 18px ' + FONT;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(barM + ' เมตร', bx + barPx / 2, by - 4);
+      const nx = mx + MAP_W - 52;
+      const ny = my + 52;
+      ctx.fillStyle = 'rgba(17,24,39,.72)';
+      ctx.beginPath(); ctx.arc(nx, ny, 34, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(nx, ny - 20); ctx.lineTo(nx + 10, ny + 6); ctx.lineTo(nx, ny + 1);
+      ctx.lineTo(nx - 10, ny + 6); ctx.closePath(); ctx.fill();
+      ctx.font = '700 15px ' + FONT;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText('N', nx, ny + 8);
+      ctx.restore();
+      ctx.strokeStyle = '#c9d2df';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(mx + .5, my + .5, MAP_W - 1, MAP_H - 1);
+
+      // ── หัวเรื่อง ──
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = '#111827';
+      ctx.font = '700 40px ' + FONT;
+      ctx.fillText('ผังจุดที่พบ · ' + s.site + (s.roundName ? ' · รอบ ' + s.roundName : ''), PAD, PAD + 46);
+      ctx.fillStyle = '#4b5563';
+      ctx.font = '400 21px ' + FONT;
+      ctx.fillText('วันที่ตรวจ ' + thaiD(s.countDateFrom) +
+        (s.countDateTo && s.countDateTo !== s.countDateFrom ? ' – ' + thaiD(s.countDateTo) : '') +
+        '   ·   ออกรายงาน ' + thaiDT(new Date().toISOString()) + ' โดย ' + inspectorName(), PAD, PAD + 82);
+      ctx.fillText('1 ช่อง = ' + model.cell + ' × ' + model.cell + ' ม.   ·   ผัง ' + model.cols + ' × ' +
+        model.rows + ' ช่อง   ·   ทิศเหนืออยู่ด้านบน · แถว 1 อยู่บนสุด · คอลัมน์ A อยู่ซ้ายสุด',
+        PAD, PAD + 114);
+
+      // ── แผงรายชื่อข้างภาพ ──
+      const px = PAD + MAP_W + GAP;
+      let py = my;
+      ctx.fillStyle = '#f6f8fb';
+      roundRect(ctx, px, py, PANEL_W, Math.max(MAP_H, panelH), 14);
+      ctx.fill();
+      ctx.strokeStyle = '#dde3ec';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      py += 40;
+      ctx.fillStyle = '#111827';
+      ctx.font = '700 26px ' + FONT;
+      ctx.fillText('รายการที่พบในผัง', px + 26, py);
+      py += 32;
+      const onPlan = model.items.filter((it) => !it.far);
+      ctx.fillStyle = '#4b5563';
+      ctx.font = '400 18px ' + FONT;
+      ctx.fillText('เลขในวงกลมบนภาพ = เลขในรายการนี้   ·   ' + onPlan.length + ' ชิ้น รวมเป็น ' +
+        pins.length + ' จุด', px + 26, py);
+      py += 24;
+      ctx.fillText('★ = พบนอกทะเบียน   ·   ×N บนหมุด = จุดนั้นมีของซ้อนกันหลายชิ้น   ·   ' +
+        '[C4] = ช่องผัง', px + 26, py);
+      py += 34;
+      const counts = { found: 0, moved: 0, notfound: 0 };
+      onPlan.forEach((it) => { if (counts[it.grp] !== undefined) counts[it.grp]++; });
+      ['found', 'moved', 'notfound'].forEach((k) => {
+        ctx.beginPath();
+        ctx.arc(px + 36, py, 11, 0, Math.PI * 2);
+        ctx.fillStyle = PIN_COLOR[k];
+        ctx.fill();
+        ctx.fillStyle = '#111827';
+        ctx.font = '400 20px ' + FONT;
+        ctx.fillText(PIN_TEXT[k] + '   ' + counts[k] + ' ชิ้น', px + 58, py + 7);
+        py += 32;
+      });
+      ctx.strokeStyle = '#dde3ec';
+      ctx.beginPath();
+      ctx.moveTo(px + 26, py + 4); ctx.lineTo(px + PANEL_W - 26, py + 4); ctx.stroke();
+      py += 34;
+
+      const colW = (PANEL_W - 52 - (nCol - 1) * 10) / nCol;
+      const maxCodes = nCol === 1 ? 2 : 1;
+      shown.forEach((c, i) => {
+        const col = Math.floor(i / perCol);
+        const row = i - col * perCol;
+        const rx = px + 26 + col * (colW + 10);
+        const ry = py + row * rowH;
+        ctx.beginPath();
+        ctx.arc(rx + 13, ry - 6, 13, 0, Math.PI * 2);
+        ctx.fillStyle = PIN_COLOR[c.grp] || PIN_COLOR.mixed;
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 ' + (i + 1 > 99 ? 11 : (nCol === 1 ? 14 : 13)) + 'px ' + FONT;
+        ctx.textAlign = 'center';
+        ctx.fillText(String(i + 1), rx + 13, ry - 1);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#111827';
+        ctx.font = '400 ' + (nCol === 1 ? 19 : (nCol === 2 ? 16 : 15)) + 'px ' + FONT;
+        const codes = c.items.map((it) =>
+          (it.log.unregistered ? '★' : '') + it.log.inventoryNumber +
+          (Number(it.log.pieceNo) > 1 ? '·' + Number(it.log.pieceNo) : ''));
+        let line = codes.slice(0, maxCodes).join(', ');
+        if (codes.length > maxCodes) line += ' +' + (codes.length - maxCodes);
+        if (nCol === 1 && c.items.length === 1 && c.items[0].asset) {
+          line += ' · ' + (c.items[0].asset.description || '');
+        }
+        line += '  [' + c.items[0].ref + ']';
+        ctx.fillText(fitText(ctx, line, colW - 36), rx + 34, ry);
+      });
+      py += perCol * rowH;
+      if (pins.length > shown.length) {
+        ctx.fillStyle = '#7a6a45';
+        ctx.font = '400 18px ' + FONT;
+        ctx.fillText('หมุดที่ ' + (shown.length + 1) + '–' + pins.length +
+          ' อยู่บนภาพแล้ว แต่ไม่ได้ลงรายชื่อที่นี่ — ดูครบในไฟล์ Excel', px + 26, py + 26);
+      }
+
+      // ── ท้ายรูป ──
+      const fy = PAD + HEAD_H + Math.max(MAP_H, panelH) + 34;
+      ctx.fillStyle = '#4b5563';
+      ctx.font = '400 18px ' + FONT;
+      ctx.fillText(SAT_CREDIT + '   ·   ' + (missing ? 'มีไทล์ภาพโหลดไม่ครบ ' + missing + ' ช่อง   ·   ' : '') +
+        'ภาพถ่ายดาวเทียมอาจถ่ายไว้ก่อนสภาพไซต์ปัจจุบัน ให้ยึดเส้นตารางช่องเป็นหลัก', PAD, fy);
+      ctx.fillText('ตำแหน่งมาจาก GPS ของโทรศัพท์ คลาดเคลื่อนราว ±' + Math.max(model.accAvg, 5) +
+        ' ม. ใช้ช่วยหาของหน้างาน ไม่ใช่ค่าพิกัดงานสำรวจ' +
+        (model.farCount ? '   ·   มี ' + model.farCount + ' ชิ้นพิกัดคลาดเคลื่อนมาก ไม่ได้ลงผัง' : ''),
+        PAD, fy + 30);
+
+      busy('กำลังบันทึกรูป...');
+      const blob = await new Promise((res, rej) => {
+        try { cv.toBlob((b) => (b ? res(b) : rej(new Error('สร้างรูปไม่สำเร็จ'))), 'image/png'); }
+        catch (e) { rej(e); }
+      });
+      const d2 = s.countDateFrom ? new Date(s.countDateFrom + 'T00:00:00') : new Date();
+      const name = 'Layout_' + s.site + '_' + d2.getDate() + '.' + (d2.getMonth() + 1) +
+        '.' + String(d2.getFullYear() + 543).slice(-2) + '.png';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast('สร้างไฟล์ ' + name + ' แล้ว (' + pins.length + ' จุด · ' + onPlan.length + ' ชิ้น)', 'success');
+    } catch (e) {
+      const msg = /tainted|SecurityError/i.test(String(e && e.name) + String(e && e.message))
+        ? 'บันทึกรูปไม่ได้เพราะเซิร์ฟเวอร์ภาพดาวเทียมไม่ยอมให้ดึงมาประกอบ ลองใหม่อีกครั้ง'
+        : (isNetworkError(e) ? 'ต้องต่ออินเทอร์เน็ตเพื่อโหลดภาพถ่ายดาวเทียม' : e.message);
+      toast('สร้างผังไม่สำเร็จ: ' + msg, 'error', null, 7000);
+    } finally {
+      busyHide();
+    }
+  }
+
   async function exportExcel() {
     const s = state.activeSession;
     if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
@@ -5043,7 +5559,7 @@ const App = (() => {
     openBulk, closeBulk, setBulkResult, bulkSubmit, pickChoose,
     toggleCatPicker, closeCatPicker, renderCatPicker, toggleCat, pickAllCats,
     formatBulkTail, insertYY, setBulkAuto,
-    openUnlisted, exportExcel, toggleSection,
+    openUnlisted, exportExcel, exportLayoutImage, toggleSection,
     setUserField, clearLocalCache
   };
 })();

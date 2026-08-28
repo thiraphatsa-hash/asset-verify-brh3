@@ -306,6 +306,7 @@ main {
   gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
 }
 .page-head h2 { font-size: 22px; }
+.dash-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ── การ์ดรอบตรวจ (หน้าหลัก) ────────────────────────────────────────────── */
 .session-list { display: grid; gap: 10px; grid-template-columns: 1fr; }
