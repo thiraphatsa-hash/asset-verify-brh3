@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.9.2';
+  const APP_VERSION = 'v2.9.3';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -283,6 +283,8 @@ const App = (() => {
     xlsx: { url: 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', global: 'XLSX' },
     exceljs: { url: 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js', global: 'ExcelJS' },
     zxing: { url: 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js', global: 'ZXing' },
+    // ใช้แกะ/ประกอบไฟล์ .xlsx ใหม่ตอนฝังกราฟผัง — ExcelJS สร้างกราฟเองไม่ได้
+    jszip: { url: 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', global: 'JSZip' },
     leaflet: {
       url: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js', global: 'L',
       css: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css'
@@ -4378,6 +4380,465 @@ const App = (() => {
     return ws;
   }
 
+  // ── ผังจุดที่พบ: แปลงพิกัด GPS เป็น "ผังหน้างาน" สำหรับประกอบรายงาน ─────────
+  // GPS มือถือให้ค่าเป็นองศา ใช้อ่านหน้างานไม่ได้ จึงฉายลงระนาบเมตรรอบจุดกึ่งกลางไซต์
+  // แล้วหั่นเป็นตารางช่อง (A1, B3, …) เพื่อให้รายงานอ้างได้ว่า "ของชิ้นนี้อยู่ช่องไหน"
+  const M_PER_DEG_LAT = 110540;
+  const LAYOUT_MAX_COLS = 18;
+  const LAYOUT_MAX_ROWS = 26;
+  const LAYOUT_CELL_SIZES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+  const LAYOUT_GRP = [
+    { key: 'found', name: 'พบ', color: '2E9E5B' },
+    { key: 'moved', name: 'ย้ายออก', color: 'E08A1E' },
+    { key: 'notfound', name: 'ไม่พบ', color: 'D24B3E' }
+  ];
+  const LAYOUT_FILL = {
+    found: 'FFE3F3EA', notfound: 'FFFBE6E3', moved: 'FFFFF3D6',
+    mixed: 'FFE8EDF5', empty: 'FFFBFCFE', head: 'FFEDF1F7'
+  };
+  const layoutColLetter = (i) => String.fromCharCode(65 + i);   // 0 → A (ผังกว้างไม่เกิน 18 ช่อง)
+  /** เลขคอลัมน์ (เริ่มที่ 1) → ชื่อคอลัมน์แบบ Excel: 1→A, 27→AA */
+  function xlColName(n) {
+    let s = '';
+    let x = n;
+    while (x > 0) { const m = (x - 1) % 26; s = String.fromCharCode(65 + m) + s; x = Math.floor((x - 1) / 26); }
+    return s;
+  }
+  function layoutMedian(arr) {
+    if (!arr.length) return 0;
+    const a = arr.slice().sort((x, y) => x - y);
+    const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+  }
+  function xmlEsc(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  }
+
+  /** บันทึกล่าสุดของแต่ละ "ชิ้น" ที่มีพิกัดใช้ได้จริง (1 ชิ้น = 1 จุดบนผัง) */
+  function gpsLatestPieces(logsAll) {
+    const map = new Map();
+    logsAll.forEach((l) => {
+      if (l.gpsLat == null || l.gpsLng == null) return;
+      const lat = Number(l.gpsLat);
+      const lng = Number(l.gpsLng);
+      if (!isFinite(lat) || !isFinite(lng)) return;
+      if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+      if (lat === 0 && lng === 0) return;
+      const key = l.inventoryNumber + '#' + (Number(l.pieceNo) > 0 ? Number(l.pieceNo) : 1);
+      const cur = map.get(key);
+      if (!cur || isNewer(l, cur)) map.set(key, l);
+    });
+    return Array.from(map.values());
+  }
+
+  /**
+   * โมเดลผัง: ฉายพิกัดลงระนาบเมตร → ตัดจุดหลงทาง → เลือกขนาดช่องอัตโนมัติ
+   * คืน null เมื่อไม่มีพิกัดเลย (ผู้เรียกจะข้ามชีทผังไป)
+   */
+  function buildLayoutModel(logsAll) {
+    const pts = gpsLatestPieces(logsAll);
+    if (!pts.length) return null;
+    const lat0 = layoutMedian(pts.map((l) => Number(l.gpsLat)));
+    const lng0 = layoutMedian(pts.map((l) => Number(l.gpsLng)));
+    const mPerLng = 111320 * Math.cos(lat0 * Math.PI / 180) || 111320;
+    const byInv = new Map();
+    state.master.forEach((a) => { byInv.set(a.inventoryNumber, a); });
+    const items = pts.map((l) => {
+      const a = byInv.get(l.inventoryNumber) || null;
+      return {
+        log: l, asset: a,
+        cx: (Number(l.gpsLng) - lng0) * mPerLng,     // ระนาบเมตร มีจุดกึ่งกลางไซต์เป็นศูนย์
+        cy: (Number(l.gpsLat) - lat0) * M_PER_DEG_LAT,
+        acc: Number(l.gpsAccuracy) || 0,
+        grp: classify(l)
+      };
+    });
+    // จุดที่พิกัดเพี้ยน (เช่นจับดาวเทียมไม่ทัน) จะดึงผังให้กว้างจนอ่านไม่ได้ → กันออกก่อน
+    const dist = items.map((it) => Math.sqrt(it.cx * it.cx + it.cy * it.cy));
+    const limit = Math.max(150, layoutMedian(dist) * 4);
+    items.forEach((it, i) => { it.far = dist[i] > limit; });
+    const base = items.filter((it) => !it.far);
+    const use = base.length ? base : items;
+    if (!base.length) items.forEach((it) => { it.far = false; });
+    const xs = use.map((it) => it.cx);
+    const ys = use.map((it) => it.cy);
+    const minX = Math.min.apply(null, xs);
+    const minY = Math.min.apply(null, ys);
+    const spanX = Math.max.apply(null, xs) - minX;
+    const spanY = Math.max.apply(null, ys) - minY;
+    let cell = LAYOUT_CELL_SIZES[LAYOUT_CELL_SIZES.length - 1];
+    for (let i = 0; i < LAYOUT_CELL_SIZES.length; i++) {
+      const c = LAYOUT_CELL_SIZES[i];
+      if (Math.floor(spanX / c) + 1 <= LAYOUT_MAX_COLS &&
+          Math.floor(spanY / c) + 1 <= LAYOUT_MAX_ROWS) { cell = c; break; }
+    }
+    const model = {
+      items: items, cell: cell, lat0: lat0, lng0: lng0, mPerLng: mPerLng,
+      minX: minX, minY: minY, spanX: spanX, spanY: spanY,
+      cols: Math.min(LAYOUT_MAX_COLS, Math.floor(spanX / cell) + 1),
+      rows: Math.min(LAYOUT_MAX_ROWS, Math.floor(spanY / cell) + 1),
+      originLat: lat0 + minY / M_PER_DEG_LAT,       // มุมล่างซ้ายของผัง = X0 Y0
+      originLng: lng0 + minX / mPerLng,
+      farCount: items.filter((it) => it.far).length,
+      // เฉลี่ยเฉพาะจุดที่อยู่บนผัง ไม่งั้นจุดหลงทางที่ความแม่นยำแย่จะดึงค่าจนไม่มีความหมาย
+      accAvg: Math.round(use.reduce((n, it) => n + it.acc, 0) / use.length)
+    };
+    items.forEach((it) => {
+      it.X = it.cx - minX;
+      it.Y = it.cy - minY;
+      it.ref = it.far ? 'นอกผัง' : layoutRefOf(model, Number(it.log.gpsLat), Number(it.log.gpsLng));
+      it.ci = Math.floor(it.X / cell);
+      it.ri = Math.floor((spanY - it.Y) / cell);
+    });
+    return model;
+  }
+
+  /** ป้ายรหัสบนผัง: ★ = นอกทะเบียน, ·2 = ชิ้นที่ 2 ของ RT code เดียวกัน */
+  function layoutCodeOf(it) {
+    const p = Number(it.log.pieceNo) > 1 ? '·' + Number(it.log.pieceNo) : '';
+    return (it.log.unregistered ? '★' : '') + it.log.inventoryNumber + p;
+  }
+
+  /** ช่องผังของพิกัดหนึ่ง ๆ เช่น "C4" — ใช้ได้กับทุกบันทึก ไม่ใช่เฉพาะล่าสุด */
+  function layoutRefOf(model, lat, lng) {
+    if (!model || !isFinite(lat) || !isFinite(lng)) return '';
+    const X = (lng - model.lng0) * model.mPerLng - model.minX;
+    const Y = (lat - model.lat0) * M_PER_DEG_LAT - model.minY;
+    const ci = Math.floor(X / model.cell);
+    const ri = Math.floor((model.spanY - Y) / model.cell);
+    if (ci < 0 || ci >= model.cols || ri < 0 || ri >= model.rows) return 'นอกผัง';
+    return layoutColLetter(ci) + (ri + 1);
+  }
+
+  /**
+   * ชีท "ผังจุดที่พบ" = ผังตารางทางซ้าย + ตารางรายชิ้นทางขวา
+   * ตารางรายชิ้นเรียงตามผลตรวจไว้แล้ว เพื่อให้กราฟ XY อ้างช่วงแถวต่อเนื่องได้ทีละสี
+   * คืนสเปกของกราฟให้ injectScatterChart ไปฝังต่อ (ExcelJS สร้างกราฟเองไม่ได้)
+   */
+  function buildLayoutSheet(wb, s, model) {
+    const SHEET = 'ผังจุดที่พบ';
+    const ws = wb.addWorksheet(SHEET, {
+      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 }
+    });
+    const cols = model.cols;
+    const rows = model.rows;
+    const tc = 2 + cols + 1;                       // คอลัมน์แรกของตารางรายชิ้น
+    ws.getColumn(1).width = 6;
+    for (let c = 0; c < cols; c++) ws.getColumn(2 + c).width = 15;
+    ws.getColumn(tc - 1).width = 2;
+    const tw = [5, 19, 6, 30, 10, 14, 8, 9, 9, 12, 12, 13, 18, 20, 18, 18];
+    tw.forEach((w, i) => { ws.getColumn(tc + i).width = w; });
+
+    const put = (r, c, v, opt) => {
+      const cell = ws.getCell(r, c);
+      cell.value = v === '' ? null : v;
+      const o = opt || {};
+      cell.font = { name: 'Tahoma', size: o.size || 10, bold: !!o.bold, color: o.color ? { argb: o.color } : undefined };
+      if (o.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: o.fill } };
+      if (o.align) cell.alignment = o.align;
+      if (o.border) cell.border = BORDER;
+      if (o.numFmt) cell.numFmt = o.numFmt;
+      return cell;
+    };
+
+    // ── หัวเรื่อง + วิธีอ่านผัง ──
+    put(1, 1, 'ผังจุดที่พบ (สร้างจากพิกัด GPS ที่บันทึกไว้)', { size: 14, bold: true });
+    const g = (n) => Math.round(n) + ' ม.';
+    [
+      ['โครงการ / รอบ', s.site + (s.roundName ? ' · ' + s.roundName : '')],
+      ['สเกลของผัง', '1 ช่อง = ' + model.cell + ' × ' + model.cell + ' เมตร  ·  ผังกว้าง ' + cols +
+        ' ช่อง (' + g(model.spanX) + ') สูง ' + rows + ' ช่อง (' + g(model.spanY) + ')'],
+      ['วิธีอ่าน', 'ทิศเหนืออยู่ด้านบน · แถว 1 เหนือสุด · คอลัมน์ A ตะวันตกสุด · อ้างช่องได้เลย เช่น C4'],
+      ['มุมล่างซ้ายของผัง', 'X=0 Y=0 ตรงกับละติจูด ' + model.originLat.toFixed(6) +
+        ', ลองจิจูด ' + model.originLng.toFixed(6)],
+      ['จำนวนจุดบนผัง', (model.items.length - model.farCount) + ' ชิ้น' +
+        (model.farCount ? '  ·  อีก ' + model.farCount + ' ชิ้นพิกัดคลาดเคลื่อนมาก ไม่ได้ลงผัง (อยู่ท้ายตาราง)' : '') +
+        '  ·  ความแม่นยำเฉลี่ย ±' + model.accAvg + ' ม.']
+    ].forEach((row, i) => {
+      put(3 + i, 1, row[0], { bold: true });
+      put(3 + i, 2, row[1]);
+    });
+    put(8, 1, 'ตำแหน่งนี้มาจาก GPS ของโทรศัพท์ คลาดเคลื่อนได้ราว ±5–20 ม. ใช้ช่วยหาของหน้างาน ' +
+      'ไม่ใช่ค่าพิกัดงานสำรวจ', { size: 9, color: 'FF7A6A45' });
+
+    // ── คำอธิบายสี ──
+    put(9, 1, 'สีช่อง', { bold: true, size: 9 });
+    [['พบ', LAYOUT_FILL.found], ['ไม่พบ', LAYOUT_FILL.notfound], ['ย้ายออก', LAYOUT_FILL.moved],
+      ['ปนกัน', LAYOUT_FILL.mixed]].forEach((lg, i) => {
+      put(9, 2 + i, lg[0], { size: 9, fill: lg[1], border: true, align: { horizontal: 'center' } });
+    });
+    put(9, 6, '★ = พบนอกทะเบียน', { size: 9 });
+
+    // ── ผังตาราง ──
+    const gh = 11;                                  // แถวหัวคอลัมน์ผัง
+    put(gh, 1, 'เหนือ ↑', { bold: true, size: 8, fill: LAYOUT_FILL.head, border: true,
+      align: { horizontal: 'center', vertical: 'middle' } });
+    for (let c = 0; c < cols; c++) {
+      put(gh, 2 + c, layoutColLetter(c), { bold: true, size: 10, fill: LAYOUT_FILL.head,
+        border: true, align: { horizontal: 'center', vertical: 'middle' } });
+    }
+    const bucket = {};
+    model.items.forEach((it) => {
+      if (it.far) return;
+      const k = it.ri + ',' + it.ci;
+      (bucket[k] = bucket[k] || []).push(it);
+    });
+    for (let rI = 0; rI < rows; rI++) {
+      const rr = gh + 1 + rI;
+      ws.getRow(rr).height = 56;
+      put(rr, 1, rI + 1, { bold: true, size: 10, fill: LAYOUT_FILL.head, border: true,
+        align: { horizontal: 'center', vertical: 'middle' } });
+      for (let cI = 0; cI < cols; cI++) {
+        const list = bucket[rI + ',' + cI] || [];
+        let fill = LAYOUT_FILL.empty;
+        let text = '';
+        if (list.length) {
+          const kinds = {};
+          list.forEach((it) => { kinds[it.grp] = 1; });
+          const keys = Object.keys(kinds);
+          fill = keys.length === 1 ? (LAYOUT_FILL[keys[0]] || LAYOUT_FILL.mixed) : LAYOUT_FILL.mixed;
+          const lines = list.length > 1 ? [list.length + ' ชิ้น'] : [];
+          list.slice(0, 3).forEach((it) => { lines.push(layoutCodeOf(it)); });
+          if (list.length > 3) lines.push('+' + (list.length - 3) + ' อื่น');
+          text = lines.join('\n');
+        }
+        put(rr, 2 + cI, text, { size: 8, fill: fill, border: true,
+          align: { wrapText: true, vertical: 'top', horizontal: 'left' } });
+      }
+    }
+    const gridEnd = gh + rows;
+
+    // ── ตารางรายชิ้น (เป็นทั้งข้อมูลอ้างอิงของรายงานและแหล่งข้อมูลของกราฟ) ──
+    const rank = (it) => {
+      if (it.far) return 9;
+      const i = LAYOUT_GRP.map((x) => x.key).indexOf(it.grp);
+      return i < 0 ? 8 : i;
+    };
+    const sorted = model.items.slice().sort((a, b) =>
+      rank(a) - rank(b) ||
+      String(a.ref).localeCompare(String(b.ref)) ||
+      String(a.log.inventoryNumber).localeCompare(String(b.log.inventoryNumber)));
+    const tHead = ['ลำดับ', 'RT code', 'ชิ้นที่', 'ชื่อทรัพย์สิน', 'ประเภท', 'ผลตรวจ', 'ช่องผัง',
+      'X (ม.)', 'Y (ม.)', 'Latitude', 'Longitude', 'ความแม่นยำ (ม.)', 'โซนในทะเบียน',
+      'ตำแหน่งที่ตรวจ', 'ผู้บันทึก', 'เวลาที่บันทึก'];
+    put(gh - 1, tc, 'รายชิ้น — ของชิ้นไหนอยู่ช่องไหนของผัง', { bold: true, size: 11 });
+    tHead.forEach((h, i) => { styleHeadCell(ws.getCell(gh, tc + i)).value = h; });
+    const first = gh + 1;
+    sorted.forEach((it, i) => {
+      const l = it.log;
+      const a = it.asset;
+      const row = [i + 1, (l.unregistered ? '★' : '') + l.inventoryNumber,
+        Number(l.pieceNo) || 1,
+        a ? (a.description || '') : (l.unlistedDesc || '(นอกทะเบียน)'),
+        l.assetType === 'RENTAL' ? 'ของเช่า' : (l.unregistered ? 'นอกทะเบียน' : 'Fixed'),
+        statusLabel(l), it.ref,
+        it.far ? null : Math.round(it.X * 10) / 10,
+        it.far ? null : Math.round(it.Y * 10) / 10,
+        Number(Number(l.gpsLat).toFixed(6)), Number(Number(l.gpsLng).toFixed(6)),
+        it.acc ? Math.round(it.acc) : null,
+        a ? areaLabel(a.location || '') : '', l.locationText || '',
+        l.inspector || '', thaiDT(l.verifiedAt)];
+      row.forEach((v, c) => {
+        put(first + i, tc + c, v, {
+          size: 9, border: true,
+          numFmt: (c === 7 || c === 8) ? '0.0' : ((c === 9 || c === 10) ? '0.000000' : undefined),
+          align: (c === 0 || c === 2 || c === 6 || c === 11) ? { horizontal: 'center' } : undefined,
+          fill: it.far ? 'FFF4F4F5' : undefined
+        });
+      });
+    });
+    ws.autoFilter = {
+      from: { row: gh, column: tc },
+      to: { row: gh + sorted.length, column: tc + tHead.length - 1 }
+    };
+    ws.views = [{ state: 'frozen', xSplit: 0, ySplit: gh }];
+
+    // ── สเปกกราฟ XY: 1 ชุดสีต่อ 1 ผลตรวจ ต้องเป็นช่วงแถวติดกัน จึงเรียงมาแล้วข้างบน ──
+    const cX = xlColName(tc + 7);
+    const cY = xlColName(tc + 8);
+    const qs = "'" + SHEET.replace(/'/g, "''") + "'!";
+    const series = [];
+    LAYOUT_GRP.forEach((grp) => {
+      let from = -1;
+      let to = -1;
+      sorted.forEach((it, i) => {
+        if (it.far || it.grp !== grp.key) return;
+        if (from < 0) from = i;
+        to = i;
+      });
+      if (from < 0) return;
+      series.push({
+        name: grp.name, color: grp.color,
+        xRef: qs + '$' + cX + '$' + (first + from) + ':$' + cX + '$' + (first + to),
+        yRef: qs + '$' + cY + '$' + (first + from) + ':$' + cY + '$' + (first + to)
+      });
+    });
+    // พิมพ์เฉพาะผัง + กราฟ ถ้าลากตารางรายชิ้นเข้ามาด้วย fitToWidth จะย่อจนอ่านไม่ออก
+    ws.pageSetup.printArea = 'A1:' + xlColName(1 + cols) + (gridEnd + 23);
+    if (!series.length) return null;
+    return {
+      sheet: SHEET, series: series,
+      title: 'ผังจุดที่พบ · 1 ช่อง = ' + model.cell + ' ม.',
+      titleX: 'ระยะทางทิศตะวันออก จากมุมล่างซ้ายของผัง (ม.)',
+      titleY: 'ระยะทางทิศเหนือ จากมุมล่างซ้ายของผัง (ม.)',
+      anchor: { col: 0, row: gridEnd + 1, col2: Math.max(8, cols + 1), row2: gridEnd + 23 }
+    };
+  }
+
+  /** XML ของกราฟ XY ตามสคีมา DrawingML — เรียงลำดับแท็กตามสคีมาเป๊ะ ๆ ห้ามสลับ */
+  function scatterChartXml(spec) {
+    const AX1 = '482516352';
+    const AX2 = '482518272';
+    const NS_C = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
+    const NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+    const NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+    const rich = (t, sz, b) =>
+      '<c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="' + sz + '" b="' + (b ? 1 : 0) +
+      '"/></a:pPr><a:r><a:rPr lang="th-TH" sz="' + sz + '" b="' + (b ? 1 : 0) + '"/><a:t>' +
+      xmlEsc(t) + '</a:t></a:r></a:p></c:rich>';
+    const title = (t, sz, b) =>
+      '<c:title><c:tx>' + rich(t, sz, b) + '</c:tx><c:overlay val="0"/></c:title>';
+    const ser = spec.series.map((s, i) =>
+      '<c:ser><c:idx val="' + i + '"/><c:order val="' + i + '"/>' +
+      '<c:tx><c:v>' + xmlEsc(s.name) + '</c:v></c:tx>' +
+      '<c:spPr><a:ln w="19050"><a:noFill/></a:ln></c:spPr>' +
+      '<c:marker><c:symbol val="circle"/><c:size val="7"/>' +
+      '<c:spPr><a:solidFill><a:srgbClr val="' + s.color + '"/></a:solidFill>' +
+      '<a:ln w="9525"><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln></c:spPr></c:marker>' +
+      '<c:xVal><c:numRef><c:f>' + xmlEsc(s.xRef) + '</c:f></c:numRef></c:xVal>' +
+      '<c:yVal><c:numRef><c:f>' + xmlEsc(s.yRef) + '</c:f></c:numRef></c:yVal>' +
+      '<c:smooth val="0"/></c:ser>').join('');
+    const axis = (id, cross, pos, t) =>
+      '<c:valAx><c:axId val="' + id + '"/><c:scaling><c:orientation val="minMax"/></c:scaling>' +
+      '<c:delete val="0"/><c:axPos val="' + pos + '"/><c:majorGridlines/>' + title(t, 900, false) +
+      '<c:numFmt formatCode="0" sourceLinked="0"/><c:majorTickMark val="out"/>' +
+      '<c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>' +
+      '<c:crossAx val="' + cross + '"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/></c:valAx>';
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<c:chartSpace xmlns:c="' + NS_C + '" xmlns:a="' + NS_A + '" xmlns:r="' + NS_R + '">' +
+      '<c:roundedCorners val="0"/><c:chart>' + title(spec.title, 1200, true) +
+      '<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>' +
+      '<c:scatterChart><c:scatterStyle val="lineMarker"/><c:varyColors val="0"/>' + ser +
+      '<c:axId val="' + AX1 + '"/><c:axId val="' + AX2 + '"/></c:scatterChart>' +
+      axis(AX1, AX2, 'b', spec.titleX) + axis(AX2, AX1, 'l', spec.titleY) +
+      '</c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>' +
+      '<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart></c:chartSpace>';
+  }
+
+  /**
+   * ฝังกราฟ XY ลงไฟล์ที่ ExcelJS เขียนเสร็จแล้ว (ExcelJS ไม่มี API สร้างกราฟ)
+   * ทำโดยแกะ .xlsx ซึ่งเป็นไฟล์ zip แล้วเติมส่วน chart/drawing ตามมาตรฐาน OOXML
+   * ถ้าพลาดตรงไหนจะโยน error ออกไป ผู้เรียกจะใช้ไฟล์เดิมที่ยังสมบูรณ์แทน
+   */
+  async function injectScatterChart(buf, spec) {
+    await ensureLibrary('jszip');
+    const zip = await window.JSZip.loadAsync(buf);
+    const dp = new DOMParser();
+    const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+    const read = async (p) => (zip.file(p) ? zip.file(p).async('string') : null);
+
+    // 1) หาไฟล์ XML ของชีทเป้าหมาย (ลำดับชีทใน zip ไม่ตรงกับลำดับที่เห็นเสมอไป)
+    const wbDoc = dp.parseFromString(await read('xl/workbook.xml'), 'application/xml');
+    const sheets = wbDoc.getElementsByTagName('sheet');
+    let rid = '';
+    for (let i = 0; i < sheets.length; i++) {
+      if (sheets[i].getAttribute('name') === spec.sheet) {
+        rid = sheets[i].getAttributeNS(REL_NS, 'id') || sheets[i].getAttribute('r:id');
+      }
+    }
+    if (!rid) throw new Error('ไม่พบชีท ' + spec.sheet);
+    const relDoc = dp.parseFromString(await read('xl/_rels/workbook.xml.rels'), 'application/xml');
+    const relList = relDoc.getElementsByTagName('Relationship');
+    let target = '';
+    for (let i = 0; i < relList.length; i++) {
+      if (relList[i].getAttribute('Id') === rid) target = relList[i].getAttribute('Target') || '';
+    }
+    if (!target) throw new Error('ไม่พบไฟล์ของชีท ' + spec.sheet);
+    const sheetPath = 'xl/' + target.replace(/^\/?xl\//, '').replace(/^\//, '');
+    const base = sheetPath.split('/').pop();
+    const sheetRelsPath = sheetPath.replace(base, '_rels/' + base + '.rels');
+    let sheetXml = await read(sheetPath);
+    if (!sheetXml) throw new Error('อ่านชีทไม่ได้');
+    if (sheetXml.indexOf('<drawing ') >= 0) throw new Error('ชีทนี้มีภาพวาดอยู่แล้ว');
+
+    // 2) เลขลำดับ part ที่ยังว่าง (ชีทรูปถ่ายกิน drawing1 ไปแล้ว)
+    const nextIdx = (dir, pre) => {
+      let n = 0;
+      Object.keys(zip.files).forEach((p) => {
+        const m = p.match(new RegExp('^' + dir + '/' + pre + '(\\d+)\\.xml$'));
+        if (m) n = Math.max(n, Number(m[1]));
+      });
+      return n + 1;
+    };
+    const dN = nextIdx('xl/drawings', 'drawing');
+    const cN = nextIdx('xl/charts', 'chart');
+
+    // 3) rId ใหม่ของชีท (ชีทอาจมี rels อยู่แล้วจากไฮเปอร์ลิงก์)
+    let relsXml = await read(sheetRelsPath);
+    let maxRid = 0;
+    if (relsXml) {
+      const re = /Id="rId(\d+)"/g;
+      let m;
+      while ((m = re.exec(relsXml))) maxRid = Math.max(maxRid, Number(m[1]));
+    } else {
+      relsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+    }
+    const newRid = 'rId' + (maxRid + 1);
+    const drawRel = '<Relationship Id="' + newRid + '" Type="' + REL_NS + '/drawing"' +
+      ' Target="../drawings/drawing' + dN + '.xml"/>';
+    zip.file(sheetRelsPath, relsXml.replace('</Relationships>', drawRel + '</Relationships>'));
+
+    // 4) <drawing/> ต้องอยู่ก่อน tableParts/extLst ตามลำดับสคีมาของ worksheet
+    if (sheetXml.indexOf('xmlns:r=') < 0) {
+      sheetXml = sheetXml.replace('<worksheet ', '<worksheet xmlns:r="' + REL_NS + '" ');
+    }
+    let at = sheetXml.lastIndexOf('</worksheet>');
+    ['<tableParts', '<extLst', '<legacyDrawing', '<picture', '<oleObjects', '<controls']
+      .forEach((tag) => {
+        const i = sheetXml.indexOf(tag);
+        if (i >= 0 && i < at) at = i;
+      });
+    zip.file(sheetPath, sheetXml.slice(0, at) + '<drawing r:id="' + newRid + '"/>' + sheetXml.slice(at));
+
+    // 5) drawing + rels + chart
+    const a = spec.anchor;
+    zip.file('xl/drawings/drawing' + dN + '.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"' +
+      ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"' +
+      ' xmlns:r="' + REL_NS + '">' +
+      '<xdr:twoCellAnchor>' +
+      '<xdr:from><xdr:col>' + a.col + '</xdr:col><xdr:colOff>0</xdr:colOff>' +
+      '<xdr:row>' + a.row + '</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>' +
+      '<xdr:to><xdr:col>' + a.col2 + '</xdr:col><xdr:colOff>0</xdr:colOff>' +
+      '<xdr:row>' + a.row2 + '</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>' +
+      '<xdr:graphicFrame macro="">' +
+      '<xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="ผังจุดที่พบ"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>' +
+      '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>' +
+      '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">' +
+      '<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"' +
+      ' xmlns:r="' + REL_NS + '" r:id="rId1"/></a:graphicData></a:graphic>' +
+      '</xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>');
+    zip.file('xl/drawings/_rels/drawing' + dN + '.xml.rels',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="' + REL_NS + '/chart" Target="../charts/chart' + cN + '.xml"/>' +
+      '</Relationships>');
+    zip.file('xl/charts/chart' + cN + '.xml', scatterChartXml(spec));
+
+    // 6) ประกาศชนิดของ part ใหม่ ไม่งั้น Excel จะไม่รู้จักและฟ้องไฟล์เสีย
+    const ct = await read('[Content_Types].xml');
+    zip.file('[Content_Types].xml', ct.replace('</Types>',
+      '<Override PartName="/xl/drawings/drawing' + dN + '.xml"' +
+      ' ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>' +
+      '<Override PartName="/xl/charts/chart' + cN + '.xml"' +
+      ' ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>' +
+      '</Types>'));
+    return zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
+  }
+
   async function exportExcel() {
     const s = state.activeSession;
     if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
@@ -4390,6 +4851,8 @@ const App = (() => {
 
       const st = { FIXED: typeStats('FIXED'), RENTAL: typeStats('RENTAL') };
       const logsAll = allLogs();
+      // ผังหน้างานจากพิกัด GPS — คำนวณก่อน เพราะชีทประวัติต้องใช้ "ช่องผัง" ด้วย
+      const layout = buildLayoutModel(logsAll);
       const unlistedMap = {};
       logsAll.filter((l) => l.unregistered).forEach((l) => {
         const cur = unlistedMap[l.inventoryNumber];
@@ -4488,8 +4951,14 @@ const App = (() => {
       }
       // วิธีเปิดแผนที่ด้วยฟังก์ชันของ Excel เอง (ข้อมูลเตรียมไว้ให้พร้อมใช้แล้ว)
       const gpsCount = logsAll.filter((l) => l.gpsLat != null && l.gpsLng != null).length;
-      put(r, 1, 'ดูแผนที่จุดที่ตรวจด้วย Excel', true).font = { name: 'Tahoma', size: 12, bold: true };
+      put(r, 1, 'ผังหน้างานและแผนที่จุดที่ตรวจ', true).font = { name: 'Tahoma', size: 12, bold: true };
       [
+        layout
+          ? 'ชีท "ผังจุดที่พบ" = ผังหน้างานที่วางจากพิกัด GPS (1 ช่อง = ' + layout.cell +
+            ' ม.) พร้อมกราฟ XY และตารางบอกว่าของแต่ละชิ้นอยู่ช่องไหน เช่น C4 — ' +
+            'ชีท "ประวัติการตรวจทั้งหมด" มีคอลัมน์ "ช่องผัง" ให้กรองตามช่องได้'
+          : 'ยังไม่มีพิกัด GPS ในรอบนี้ จึงไม่มีชีท "ผังจุดที่พบ" — เปิดสิทธิ์ตำแหน่งบนมือถือก่อนบันทึกจะได้ผังอัตโนมัติ',
+        ''].concat([
         'ชีท "ประวัติการตรวจทั้งหมด" เป็นตาราง Excel ชื่อ AssetVerifyLog มีคอลัมน์ Latitude / Longitude ' +
           'เป็นตัวเลขพร้อมใช้ (มีพิกัด ' + gpsCount + ' รายการ)',
         '1) คลิกเซลล์ใดก็ได้ในตารางของชีทนั้น  2) เมนู Insert (แทรก) → 3D Map (แผนที่ 3 มิติ) → Open 3D Maps',
@@ -4497,7 +4966,7 @@ const App = (() => {
         'หมายเหตุ: ปุ่ม Insert → Maps (Filled Map) ใช้ได้กับ "ชื่อพื้นที่" เช่น จังหวัด/ประเทศ เท่านั้น ' +
           'ไม่รองรับพิกัด GPS จึงต้องใช้ 3D Map',
         'ถ้าต้องการเปิดทีละจุด: คอลัมน์ "เปิดใน Google Maps" ในชีทเดียวกันกดได้เลย'
-      ].forEach((t, i) => { put(r + 1 + i, 1, t).alignment = { wrapText: false }; });
+      ]).forEach((t, i) => { put(r + 1 + i, 1, t).alignment = { wrapText: false }; });
 
       // ══ ชีท 2: ทรัพย์สิน Fixed Assets (ฟอร์มเดิม + คอลัมน์เสริม) ══
       const fixedRows = state.master.filter((a) => a.assetType === 'FIXED').map((a, i) => {
@@ -4581,8 +5050,8 @@ const App = (() => {
       const histHead = ['เวลาที่บันทึก', 'RT code', 'ชิ้นที่', 'ประเภท', 'ผล', 'วิธี', 'ผู้บันทึก',
         'ตำแหน่งที่ตรวจ', 'ส่งไป SITE', 'เลขที่ใบส่ง', 'วันที่ส่ง', 'Latitude', 'Longitude',
         'ความแม่นยำ (ม.)', 'เปิดใน Google Maps', 'หมายเหตุ',
-        'นอกทะเบียน', 'คำอธิบายนอกทะเบียน', 'จำนวนรูป', 'สถานะส่ง'];
-      [20, 19, 7, 12, 14, 9, 22, 20, 12, 13, 13, 12, 12, 14, 18, 30, 10, 26, 9, 10]
+        'นอกทะเบียน', 'คำอธิบายนอกทะเบียน', 'จำนวนรูป', 'สถานะส่ง', 'ช่องผัง'];
+      [20, 19, 7, 12, 14, 9, 22, 20, 12, 13, 13, 12, 12, 14, 18, 30, 10, 26, 9, 10, 9]
         .forEach((w, i) => { hist.getColumn(i + 1).width = w; });
       const histRows = logsAll.slice()
         .sort((a, b) => String(a.verifiedAt).localeCompare(String(b.verifiedAt)))
@@ -4602,7 +5071,8 @@ const App = (() => {
               rr + '&","&M' + rr + ',"เปิดแผนที่")', result: 'เปิดแผนที่' } : null,
             l.note || null, l.unregistered ? 'ใช่' : null, l.unlistedDesc || null,
             (l.photoPaths || []).length || l.photoCount || 0,
-            l.pending ? 'รอส่ง' : 'ส่งแล้ว'];
+            l.pending ? 'รอส่ง' : 'ส่งแล้ว',
+            hasGps ? (layoutRefOf(layout, Number(l.gpsLat), Number(l.gpsLng)) || null) : null];
         });
       // เขียนเป็น "ตาราง Excel" ชื่อ AssetVerifyLog — Excel รู้ขอบเขตข้อมูลเอง
       // ทำให้ Insert → 3D Map / PivotTable หยิบไปใช้ได้ทันที
@@ -4640,7 +5110,10 @@ const App = (() => {
         }
       }
 
-      // ══ ชีท 6: นับจำนวนตามหมวด (เฉพาะเมื่อมีการนับ) ══
+      // ══ ชีท 6: ผังจุดที่พบ (มีเฉพาะเมื่อมีพิกัด GPS) ══
+      const chartSpec = layout ? buildLayoutSheet(wb, s, layout) : null;
+
+      // ══ ชีท 7: นับจำนวนตามหมวด (เฉพาะเมื่อมีการนับ) ══
       const countsAll = allCounts();
       if (countsAll.length) {
         const cnt = wb.addWorksheet('นับจำนวนตามหมวด', { views: [{ state: 'frozen', ySplit: 1 }] });
@@ -4685,7 +5158,16 @@ const App = (() => {
       }
 
       busy('กำลังบันทึกไฟล์...');
-      const buf = await wb.xlsx.writeBuffer();
+      let buf = await wb.xlsx.writeBuffer();
+      if (chartSpec) {
+        // ฝังกราฟลงไฟล์ที่เขียนเสร็จแล้ว — ถ้าไม่สำเร็จยังได้ไฟล์เดิมที่ผังตารางครบ
+        try {
+          busy('กำลังใส่กราฟผังลงไฟล์...');
+          buf = await injectScatterChart(buf, chartSpec);
+        } catch (e) {
+          console.warn('ฝังกราฟผังไม่สำเร็จ', e);
+        }
+      }
       const d2 = s.countDateFrom ? new Date(s.countDateFrom + 'T00:00:00') : new Date();
       const name = 'Asset_' + s.site + '_' + d2.getDate() + '.' + (d2.getMonth() + 1) +
         '.' + String(d2.getFullYear() + 543).slice(-2) + '.xlsx';
