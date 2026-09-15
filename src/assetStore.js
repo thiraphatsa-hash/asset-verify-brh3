@@ -212,6 +212,32 @@ const AssetStore = (function () {
     return { inserted };
   }
 
+  /**
+   * เพิ่มรายการเข้ารอบที่มีอยู่แล้ว — ข้ามรหัสที่มีในรอบแล้ว (unique session_id+inventory_number)
+   * จึงอัปโหลดไฟล์เดิมซ้ำได้โดยไม่กระทบทะเบียนและผลตรวจเดิม
+   */
+  async function addAssets(sessionId, rows, importedBy) {
+    if (!sessionId) throw new Error('ไม่พบรอบตรวจ');
+    if (!rows || !rows.length) return { inserted: 0, rows: [] };
+    const chunk = 400;
+    let out = [];
+    for (let i = 0; i < rows.length; i += chunk) {
+      const part = rows.slice(i, i + chunk).map((r) => {
+        const row = objToRow(r);
+        row.session_id = sessionId;
+        row.imported_by = importedBy || '';
+        return row;
+      });
+      // ignoreDuplicates คืนมาเฉพาะแถวที่เพิ่มจริง → ใช้นับยอดที่ถูกต้องแม้มีคนเพิ่มชนกัน
+      const { data, error } = await getClient().from('asset_master')
+        .upsert(part, { onConflict: 'session_id,inventory_number', ignoreDuplicates: true })
+        .select('inventory_number,asset_type');
+      fail(error);
+      out = out.concat(data || []);
+    }
+    return { inserted: out.length, rows: out };
+  }
+
   /** แก้พื้นที่จัดเก็บของทรัพย์สินในทะเบียนรอบนั้น (ผู้ตรวจเติมเองหน้างานได้) */
   async function setAssetLocation(sessionId, inventoryNumbers, location, locationCode) {
     const list = (inventoryNumbers || []).filter(Boolean);
@@ -415,7 +441,7 @@ const AssetStore = (function () {
     signIn, signOut, signUp, getSession, currentUser, getMyProfile,
     sendPasswordReset, listProfiles, updateProfile, deleteUserAccount, confirmUserEmail,
     listSessions, createSession, updateSession, deleteSession,
-    loadMaster, importAssets, setAssetLocation,
+    loadMaster, importAssets, addAssets, setAssetLocation,
     loadLogs, loadLogsSummary, saveVerify, deleteLog, deleteLogsFor, subscribeLogs, unsubscribe,
     loadCounts, saveCount, deleteCount,
     uploadPhoto, photoUrls, downloadPhoto

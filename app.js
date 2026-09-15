@@ -6,11 +6,13 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.9.5';
+  const APP_VERSION = 'v2.9.6';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
-  const INV_RE = /RT-[A-Z0-9]{4}-[A-Z0-9]{2}-\d{4}/;
+  // เลขท้ายเป็นตัวเลข 4 หลัก หรือ ตัวอักษร 1 ตัว + เลข 3 หลัก (เช่น RT-PSFX-18-N102 ของ KL5-TEMP)
+  // (?![A-Z0-9]) กันไม่ให้รหัสที่พิมพ์เกิน เช่น RT-AIRC-19-00024 ถูกตัดเหลือ RT-AIRC-19-0002 แล้วหลุดเข้าทะเบียน
+  const INV_RE = /RT-[A-Z0-9]{4}-[A-Z0-9]{2}-(?:\d{4}|[A-Z]\d{3})(?![A-Z0-9])/;
 
   const RESULTS = {
     FOUND_NORMAL: { result: 'FOUND',     condition: 'NORMAL', label: 'พบ',      cls: 'found' },
@@ -854,6 +856,7 @@ const App = (() => {
     el('appVersion').textContent = APP_VERSION;
     el('nav-manage').classList.toggle('hidden', p.role !== 'admin');
     el('newRoundBtn').classList.toggle('hidden', !state.canWrite);
+    el('appendBtn').classList.toggle('hidden', !state.canWrite);
     document.querySelector('.scan-fab').classList.toggle('hidden', !state.canWrite);
   }
 
@@ -1174,7 +1177,9 @@ const App = (() => {
   const normHead = (v) => String(v || '').replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim().toUpperCase();
   function parseSheet(ws) {
     const XLSX = window.XLSX;
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+    // blankrows: true ให้ index ของแถวตรงกับแถวจริงในไฟล์ จะได้บอกเลขแถวที่ข้ามได้ถูก
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '', blankrows: true });
+    const firstRow = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s.r : 0;
     let hr = -1, invCol = -1;
     for (let r = 0; r < Math.min(rows.length, 20); r++) {
       const c = (rows[r] || []).findIndex((v) => normHead(v) === 'INVENTORY NUMBER');
@@ -1245,10 +1250,15 @@ const App = (() => {
       if (m) { costCenter = (m[1] || m[0]).replace(/\.+$/, '').toUpperCase(); break; }
     }
     const items = [];
+    const bad = [];                     // แถวที่หน้าตาเป็นรหัส RT แต่รูปแบบไม่ถูก → แจ้งผู้ใช้ ไม่ทิ้งเงียบ
     for (let r = hr + 1; r < rows.length; r++) {
       const row = rows[r] || [];
       const inv = normalizeCode(row[invCol]);
-      if (!inv) continue;
+      if (!inv) {
+        const raw = String(row[invCol] == null ? '' : row[invCol]).trim();
+        if (/^RT[-–—\s]/i.test(raw)) bad.push({ code: raw, row: firstRow + r + 1 });
+        continue;
+      }
       const item = {
         inventoryNumber: inv,
         assetType: isRental ? 'RENTAL' : 'FIXED',
@@ -1273,13 +1283,23 @@ const App = (() => {
     }
     return {
       type: isRental ? 'RENTAL' : 'FIXED', items: items,
-      costCenter: costCenter, swapped: swapped
+      costCenter: costCenter, swapped: swapped, bad: bad
     };
+  }
+  /** แถวที่ถูกข้ามเพราะรหัสรูปแบบผิด — บอกให้เห็นก่อนกดสร้าง ไม่ให้หายเงียบๆ อีก */
+  function badRowsNote(bad) {
+    if (!bad.length) return '';
+    const show = bad.slice(0, 8).map((b) =>
+      '<b class="mono">' + esc(b.code) + '</b> (' + esc(b.sheet) + ' แถว ' + b.row + ')');
+    return '<br><span class="warn-inline">' + icon('alert') + ' ข้าม ' + bad.length +
+      ' แถวที่รหัสรูปแบบไม่ถูกต้อง (ไม่ได้นำเข้า) — แก้ในไฟล์แล้วอัปโหลดใหม่ได้: ' + show.join(', ') +
+      (bad.length > 8 ? ' และอีก ' + (bad.length - 8) + ' แถว' : '') + '</span>';
   }
   async function readMasterFile(event) {
     const file = event.target.files && event.target.files[0];
     event.target.value = '';
     if (!file) return;
+    const appendTo = state.importAppend || null;      // มีค่า = เพิ่มเข้ารอบเดิม ไม่ใช่สร้างรอบใหม่
     try {
       busy('กำลังอ่านไฟล์...');
       await ensureLibrary('xlsx');
@@ -1289,9 +1309,15 @@ const App = (() => {
       let costCenter = '';
       const used = [];
       const skipped = [];
+      const bad = [];
       wb.SheetNames.forEach((name) => {
         const parsed = parseSheet(wb.Sheets[name]);
-        if (!parsed || parsed.skipped || !parsed.items.length) {
+        if (!parsed || parsed.skipped) {
+          skipped.push(name);
+          return;
+        }
+        (parsed.bad || []).forEach((b) => { bad.push({ sheet: name, code: b.code, row: b.row }); });
+        if (!parsed.items.length) {
           skipped.push(name);
           return;
         }
@@ -1307,8 +1333,39 @@ const App = (() => {
       const rows = Array.from(byInv.values());
       if (!rows.length) {
         throw new Error('ไม่พบทะเบียนทรัพย์สินในไฟล์ — ต้องมีชีทที่มีหัวคอลัมน์ "Inventory Number" ' +
-          'คู่กับ "Asset Number" (Fixed Assets) หรือ "Material" (ของเช่า)');
+          'คู่กับ "Asset Number" (Fixed Assets) หรือ "Material" (ของเช่า)' +
+          (bad.length ? ' · มีรหัสรูปแบบไม่ถูกต้อง ' + bad.length + ' แถว' : ''));
       }
+      const sheetNote = '<br>อ่านจากชีท: ' + used.map((u) => esc(u.name) + ' (' +
+          (u.type === 'RENTAL' ? 'ของเช่า ' : 'Fixed ') + u.count + ')').join(' · ') +
+        (skipped.length ? '<br><span class="hint-inline">ข้ามชีทที่ไม่ใช่ทะเบียน: ' +
+          esc(skipped.join(', ')) + '</span>' : '');
+
+      if (appendTo) {
+        // เพิ่มเฉพาะรหัสที่รอบนี้ยังไม่มี — ของเดิมและผลตรวจเดิมไม่ถูกแตะ
+        const have = new Set(state.master.map((a) => a.inventoryNumber));
+        const fresh = rows.filter((r) => !have.has(r.inventoryNumber));
+        const fFixed = fresh.filter((r) => r.assetType === 'FIXED').length;
+        state.importData = {
+          rows: fresh, fileName: file.name, fixed: fFixed, rental: fresh.length - fFixed
+        };
+        el('uploadZoneText').innerHTML = icon('note') + ' ' + esc(file.name);
+        el('importPreview').innerHTML =
+          'อ่านไฟล์สำเร็จ — ' + rows.length + ' รายการ · มีในรอบนี้แล้ว <b>' +
+          (rows.length - fresh.length) + '</b>' +
+          '<br>จะเพิ่มใหม่ <b>' + fresh.length + '</b> รายการ (Fixed <b>' + fFixed +
+          '</b> · ของเช่า <b>' + (fresh.length - fFixed) + '</b>)' +
+          (fresh.length
+            ? '<br><span class="hint-inline">เช่น ' + esc(fresh.slice(0, 6).map((r) => r.inventoryNumber)
+              .join(', ')) + (fresh.length > 6 ? ' …' : '') + '</span>'
+            : '<br><span class="hint-inline">ทุกรายการในไฟล์มีอยู่ในรอบนี้แล้ว ไม่มีอะไรต้องเพิ่ม</span>') +
+          sheetNote + badRowsNote(bad);
+        el('importPreview').classList.remove('hidden');
+        el('roundForm').classList.add('hidden');
+        el('appendForm').classList.toggle('hidden', !fresh.length);
+        return;
+      }
+
       const fixed = rows.filter((r) => r.assetType === 'FIXED').length;
       const rental = rows.length - fixed;
       // เดารหัสโครงการจากข้อมูลจริง
@@ -1328,10 +1385,7 @@ const App = (() => {
         'อ่านไฟล์สำเร็จ — <b>' + rows.length + '</b> รายการ ' +
         '(Fixed Assets <b>' + fixed + '</b> · ของเช่า <b>' + rental + '</b>)' +
         (cc ? '<br>Cost center ที่พบในไฟล์: <b>' + esc(cc) + '</b>' : '') +
-        '<br>อ่านจากชีท: ' + used.map((u) => esc(u.name) + ' (' +
-          (u.type === 'RENTAL' ? 'ของเช่า ' : 'Fixed ') + u.count + ')').join(' · ') +
-        (skipped.length ? '<br><span class="hint-inline">ข้ามชีทที่ไม่ใช่ทะเบียน: ' +
-          esc(skipped.join(', ')) + '</span>' : '') +
+        sheetNote + badRowsNote(bad) +
         (used.some((u) => u.swapped) ? '<br><span class="hint-inline">หมายเหตุ: ชีท ' +
           esc(used.filter((u) => u.swapped).map((u) => u.name).join(', ')) +
           ' หัวตารางสลับที่กับข้อมูลจริง ระบบจับคอลัมน์รหัส/คำอธิบายให้ถูกต้องแล้ว</span>' : '') +
@@ -1348,6 +1402,7 @@ const App = (() => {
       state.importData = null;
       el('importPreview').classList.add('hidden');
       el('roundForm').classList.add('hidden');
+      el('appendForm').classList.add('hidden');
       el('uploadZoneText').textContent = 'แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน';
       toast(e.message, 'error');
     } finally {
@@ -1355,11 +1410,89 @@ const App = (() => {
     }
   }
   function cancelImport() {
+    const back = state.importAppend ? 'list' : 'home';   // มาจากในรอบ ก็กลับไปในรอบ
     state.importData = null;
     el('importPreview').classList.add('hidden');
     el('roundForm').classList.add('hidden');
+    el('appendForm').classList.add('hidden');
     el('uploadZoneText').textContent = 'แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน';
-    go('home');
+    go(back);
+  }
+  const UPLOAD_HEAD = {
+    kicker: 'NEW ROUND', title: 'สร้างรอบตรวจนับใหม่',
+    hint: 'อัปโหลดไฟล์ทะเบียนทรัพย์สินของรอบนี้ (.xls / .xlsx) — ระบบอ่านชีท ' +
+      '<strong>ทรัพย์สิน Fixed Assets</strong> และ <strong>ทรัพย์สินของเช่า</strong> อัตโนมัติจากหัวตารางจริง ' +
+      'แต่ละรอบเก็บทะเบียนของตัวเอง ไม่กระทบรอบอื่น'
+  };
+  /** หน้าอัปโหลดใช้ร่วม 2 งาน: สร้างรอบใหม่ / เพิ่มรายการที่ตกหล่นเข้ารอบเดิม */
+  function renderUploadHead() {
+    const s = state.importAppend
+      ? state.sessions.find((x) => x.sessionId === state.importAppend) || state.activeSession : null;
+    el('uploadKicker').textContent = s ? 'ADD TO ROUND' : UPLOAD_HEAD.kicker;
+    el('uploadTitle').textContent = s
+      ? 'เพิ่มรายการเข้ารอบ ' + s.site + (s.roundName ? ' · ' + s.roundName : '') : UPLOAD_HEAD.title;
+    el('uploadHint').innerHTML = s
+      ? 'อัปโหลดไฟล์ทะเบียนเดิมซ้ำได้เลย — ระบบ<strong>เพิ่มเฉพาะรหัสที่รอบนี้ยังไม่มี</strong> ' +
+        'ทะเบียนและผลตรวจที่บันทึกไปแล้วอยู่ครบ ไม่ถูกแก้ ใช้กับรายการที่ตกหล่นตอนสร้างรอบ'
+      : UPLOAD_HEAD.hint;
+    if (!state.importData) {
+      el('uploadZoneText').textContent = s
+        ? 'แตะเพื่อเลือกไฟล์ที่มีรายการตกหล่น' : 'แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน';
+    }
+  }
+  function openAppendImport() {
+    const s = state.activeSession;
+    if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
+    if (!state.canWrite) return toast('เฉพาะผู้ตรวจหรือผู้ดูแลเท่านั้นที่เพิ่มรายการเข้ารอบได้', 'warn');
+    if (!navigator.onLine) return toast('ต้องต่ออินเทอร์เน็ตก่อน — การเพิ่มรายการเป็นการแก้ทะเบียนบนเซิร์ฟเวอร์', 'warn');
+    state.importAppend = s.sessionId;
+    state.importData = null;
+    el('importPreview').classList.add('hidden');
+    el('roundForm').classList.add('hidden');
+    el('appendForm').classList.add('hidden');
+    go('upload');
+  }
+  async function confirmAppend() {
+    const sid = state.importAppend;
+    const data = state.importData;
+    const s = sid ? (state.sessions.find((x) => x.sessionId === sid) || state.activeSession) : null;
+    if (!s || !data) return toast('ยังไม่ได้เลือกไฟล์', 'warn');
+    if (!data.rows.length) return toast('ไม่มีรายการใหม่ให้เพิ่ม', 'warn');
+    try {
+      busy('กำลังเช็คทะเบียนล่าสุดของรอบ...');
+      // ระหว่างเปิดหน้านี้ คนอื่นอาจเพิ่มไปก่อนแล้ว → เทียบกับบนเซิร์ฟเวอร์อีกรอบก่อนเขียน
+      const current = await AssetStore.loadMaster(sid);
+      const have = new Set(current.map((a) => a.inventoryNumber));
+      const rows = data.rows.filter((r) => !have.has(r.inventoryNumber))
+        .map((r) => Object.assign({ site: s.site }, r));
+      let added = [];
+      if (rows.length) {
+        busy('กำลังเพิ่ม ' + rows.length + ' รายการเข้ารอบ...');
+        added = (await AssetStore.addAssets(sid, rows, inspectorName())).rows || [];
+      }
+      // ตัวเลขบนการ์ดรอบมาจากคอลัมน์นับของรอบ ต้องขยับตามทะเบียนที่เพิ่มจริง
+      const addedFixed = added.filter((a) => a.asset_type === 'FIXED').length;
+      const curFixed = current.filter((a) => a.assetType === 'FIXED').length;
+      const total = current.length + added.length;
+      try {
+        await AssetStore.updateSession(sid, {
+          assetCount: total, fixedCount: curFixed + addedFixed,
+          rentalCount: total - curFixed - addedFixed
+        });
+      } catch (e) { /* ทะเบียนเพิ่มสำเร็จแล้ว ตัวเลขบนการ์ดคลาดได้ชั่วคราว */ }
+      state.importData = null;
+      el('importPreview').classList.add('hidden');
+      el('appendForm').classList.add('hidden');
+      await refreshAll(true);
+      const skippedByOthers = data.rows.length - added.length;
+      toast('เพิ่มเข้ารอบแล้ว ' + added.length + ' รายการ' +
+        (skippedByOthers > 0 ? ' (อีก ' + skippedByOthers + ' รายการมีคนเพิ่มไปก่อนแล้ว)' : ''), 'success');
+      openSession(sid);
+    } catch (e) {
+      toast('เพิ่มรายการไม่สำเร็จ: ' + e.message, 'error', null, 7000);
+    } finally {
+      busyHide();
+    }
   }
   async function confirmImport() {
     if (!state.importData) return toast('ยังไม่ได้เลือกไฟล์', 'warn');
@@ -2347,6 +2480,13 @@ const App = (() => {
       toast('เลือกรอบตรวจก่อน', 'warn');
       page = 'home';
     }
+    // ออกจากหน้าอัปโหลดระหว่างโหมดเพิ่มเข้ารอบ → ปุ่ม "สร้างรอบตรวจ" ครั้งหน้าต้องเป็นรอบใหม่จริง
+    if (page !== 'upload' && state.importAppend) {
+      state.importAppend = null;
+      state.importData = null;
+      el('importPreview').classList.add('hidden');
+      el('appendForm').classList.add('hidden');
+    }
     state.page = page;
     ['home', 'upload', 'list', 'dash', 'activity', 'manage'].forEach((p) => {
       const sec = el('page-' + p);
@@ -2362,8 +2502,9 @@ const App = (() => {
       el('topKicker').textContent = 'โครงการที่กำลังตรวจ';
       el('topTitle').textContent = s.site + (s.roundName ? ' · ' + s.roundName : '');
     } else if (page === 'upload') {
-      el('topKicker').textContent = 'NEW ROUND';
-      el('topTitle').textContent = 'สร้างรอบตรวจใหม่';
+      el('topKicker').textContent = state.importAppend ? 'ADD TO ROUND' : 'NEW ROUND';
+      el('topTitle').textContent = state.importAppend ? 'เพิ่มรายการเข้ารอบ' : 'สร้างรอบตรวจใหม่';
+      renderUploadHead();
     } else {
       el('topKicker').textContent = 'ASSET INSPECTION';
       el('topTitle').textContent = 'ระบบตรวจนับทรัพย์สิน';
@@ -3402,9 +3543,11 @@ const App = (() => {
     const full = s.match(INV_RE);
     if (full) return { code: full[0] };            // วาง/สแกนรหัสเต็มมาเลย
     s = s.replace(/^-+/, '').replace(/-+$/, '');
-    const m = s.match(/^([A-Z0-9]{2})-?(\d{1,4})$/);
+    // เลขท้าย: ตัวเลข 1-4 หลัก (เติมศูนย์เป็น 4) หรือ ตัวอักษร + เลข 1-3 หลัก เช่น N102 / N12 → N012
+    const m = s.match(/^([A-Z0-9]{2})-?([A-Z]\d{1,3}|\d{1,4})$/);
     if (!m) return {};
-    const tail = m[1] + '-' + m[2].padStart(4, '0');
+    const t = m[2];
+    const tail = m[1] + '-' + (/^[A-Z]/.test(t) ? t[0] + t.slice(1).padStart(3, '0') : t.padStart(4, '0'));
     const all = state.bulk.cats.map((c) => 'RT-' + c + '-' + tail);
     // เลือกเฉพาะรหัสที่มีอยู่จริงในทะเบียนรอบนี้ — เหลือตัวเดียวก็ใช้ได้เลยไม่ต้องถาม
     const exist = all.filter((code) => state.master.some((a) => a.inventoryNumber === code));
@@ -3511,6 +3654,21 @@ const App = (() => {
     const input = el('bulkTail');
     const raw = String(input.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     input.value = 'YY' + (raw.length > 2 ? '-' + raw.slice(2, 6) : '-');
+    input.focus();
+    const end = input.value.length;
+    try { input.setSelectionRange(end, end); } catch (e) {}
+  }
+  /** ใส่ N หน้าเลข 3 หลัก (รหัสแบบ RT-PSFX-18-N102) — แป้นตัวเลขบนมือถือพิมพ์ตัวอักษรไม่ได้ */
+  function insertN() {
+    const input = el('bulkTail');
+    const raw = String(input.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (raw.length < 2) {
+      toast('พิมพ์เลขปี 2 หลักก่อน (เช่น 18) แล้วค่อยกด "ใส่ N"', 'warn');
+      input.focus();
+      return;
+    }
+    input.value = raw.slice(0, 2) + 'N' + raw.slice(2).replace(/[A-Z]/g, '').slice(0, 3);
+    formatBulkTail(input);                           // ใส่ขีด + อัปเดตคำใบ้ + บันทึกเองถ้าครบแล้ว
     input.focus();
     const end = input.value.length;
     try { input.setSelectionRange(end, end); } catch (e) {}
@@ -5543,7 +5701,7 @@ const App = (() => {
     showAccessReq, closeAccessReq, approveAccess, rejectAccess, deleteProfileAccount,
     go, refreshAll, flushQueueNow,
     setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession,
-    readMasterFile, confirmImport, cancelImport,
+    readMasterFile, confirmImport, cancelImport, openAppendImport, confirmAppend,
     setType, setView, setSearch, setCat, setStaff, setArea, setSort, setStatus, setSelectedArea,
     openAreaPicker, closeAreaPicker, setAreaPickSearch, showMore, useLastArea,
     openQueuePanel, closeQueuePanel, retryQueue, dropQueueItem, dropAllQueue, setCountCustom,
@@ -5558,7 +5716,7 @@ const App = (() => {
     hideScanTips, dupChoose,
     openBulk, closeBulk, setBulkResult, bulkSubmit, pickChoose,
     toggleCatPicker, closeCatPicker, renderCatPicker, toggleCat, pickAllCats,
-    formatBulkTail, insertYY, setBulkAuto,
+    formatBulkTail, insertYY, insertN, setBulkAuto,
     openUnlisted, exportExcel, exportLayoutImage, toggleSection,
     setUserField, clearLocalCache
   };

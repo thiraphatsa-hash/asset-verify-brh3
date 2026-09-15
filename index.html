@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.9.5">
+  <link rel="stylesheet" href="styles.css?v=2.9.6">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -108,12 +108,12 @@
       <section id="page-upload" class="page">
         <div class="page-head">
           <div>
-            <p class="kicker">NEW ROUND</p>
-            <h2>สร้างรอบตรวจนับใหม่</h2>
+            <p id="uploadKicker" class="kicker">NEW ROUND</p>
+            <h2 id="uploadTitle">สร้างรอบตรวจนับใหม่</h2>
           </div>
         </div>
         <div class="card">
-          <p class="hint">อัปโหลดไฟล์ทะเบียนทรัพย์สินของรอบนี้ (.xls / .xlsx) — ระบบอ่านชีท
+          <p id="uploadHint" class="hint">อัปโหลดไฟล์ทะเบียนทรัพย์สินของรอบนี้ (.xls / .xlsx) — ระบบอ่านชีท
             <strong>ทรัพย์สิน Fixed Assets</strong> และ <strong>ทรัพย์สินของเช่า</strong> อัตโนมัติจากหัวตารางจริง
             แต่ละรอบเก็บทะเบียนของตัวเอง ไม่กระทบรอบอื่น</p>
           <label class="upload-zone">
@@ -143,6 +143,13 @@
             <div class="import-actions">
               <button class="outline-button" type="button" onclick="App.cancelImport()">ยกเลิก</button>
               <button class="primary-button" type="button" onclick="App.confirmImport()">สร้างรอบและนำเข้าทะเบียน</button>
+            </div>
+          </div>
+
+          <div id="appendForm" class="round-form hidden">
+            <div class="import-actions">
+              <button class="outline-button" type="button" onclick="App.cancelImport()">ยกเลิก</button>
+              <button class="primary-button" type="button" onclick="App.confirmAppend()">เพิ่มเข้ารอบนี้</button>
             </div>
           </div>
         </div>
@@ -195,6 +202,7 @@
             <button class="tool-button" type="button" onclick="App.openBulk()"><span data-icon="bolt"></span> ตรวจต่อเนื่อง</button>
             <button class="tool-button" type="button" onclick="App.openCountSheet()"><span data-icon="hash"></span> นับจำนวน</button>
             <button class="tool-button" type="button" onclick="App.openUnlisted('')"><span data-icon="plus"></span> นอกทะเบียน</button>
+            <button id="appendBtn" class="tool-button hidden" type="button" onclick="App.openAppendImport()"><span data-icon="upload"></span> เพิ่มรายการจากไฟล์</button>
             <button id="colBtn" class="tool-button" type="button" onclick="App.toggleColPicker(event)"><span data-icon="columns"></span> คอลัมน์</button>
             <button class="tool-button" type="button" onclick="App.go('activity')"><span data-icon="history"></span> ประวัติการบันทึก</button>
             <button class="tool-button" type="button" onclick="App.exportExcel()"><span data-icon="download"></span> Excel</button>
@@ -472,12 +480,14 @@
         <p id="bulkMatch" class="bulk-match"></p>
         <div class="bulk-opts">
           <button type="button" class="chip" onclick="App.insertYY()">ใส่ปี YY</button>
+          <button type="button" class="chip" onclick="App.insertN()">ใส่ N</button>
           <label class="auto-chip"><input type="checkbox" id="bulkAuto"
             onchange="App.setBulkAuto(this.checked)"> บันทึกเองเมื่อครบ 6 หลัก</label>
         </div>
         <p class="hint">พิมพ์เฉพาะตัวเลขส่วนท้าย <b>262222</b> ระบบใส่ขีดให้เอง → <b>26-2222</b>
           (แป้นพิมพ์บนมือถือเป็นตัวเลขล้วนแบบกดเบอร์โทร) — บันทึกแล้วช่องเคลียร์ให้ทันที prefix ยังอยู่
           · รหัสที่ปีเป็นตัวอักษร <b>YY</b> ให้กดปุ่ม "ใส่ปี YY"
+          · รหัสที่เลขท้ายมี <b>N</b> เช่น 18-N102 พิมพ์ <b>18</b> → กด "ใส่ N" → พิมพ์ <b>102</b>
           · เลือกหลายหมวดแล้วเลขท้ายซ้ำกัน ระบบจะให้เลือกหมวดก่อนบันทึกเสมอ (ไม่เดาให้)</p>
         <p class="form-label">ผลที่ใช้บันทึก</p>
         <div id="bulkResultSeg" class="result-seg">
@@ -658,9 +668,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.9.5" defer></script>
-  <script src="config.js?v=2.9.5"></script>
-  <script src="src/assetStore.js?v=2.9.5"></script>
-  <script src="app.js?v=2.9.5"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.9.6" defer></script>
+  <script src="config.js?v=2.9.6"></script>
+  <script src="src/assetStore.js?v=2.9.6"></script>
+  <script src="app.js?v=2.9.6"></script>
 </body>
 </html>
