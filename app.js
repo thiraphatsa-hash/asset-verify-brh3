@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.9.6';
+  const APP_VERSION = 'v2.9.7';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -369,11 +369,23 @@ const App = (() => {
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         try {
-          if (it.kind === 'count') {                 // ยอดนับตามหมวด (ไม่มีรูป ไม่มีรายชิ้น)
+          if (it.kind === 'count') {                 // ยอดนับตามหมวด (แนบรูป/พิกัดได้)
+            const cPhotos = it.photos || [];
+            for (let p = 0; p < cPhotos.length; p++) {
+              if (!cPhotos[p].path) {
+                cPhotos[p].path = await AssetStore.uploadPhoto(cPhotos[p].dataUrl, it.sessionId,
+                  'count-' + (it.categoryCode || 'NA'));
+                await qPut(it);   // จำความคืบหน้า — retry รอบหน้าไม่อัปโหลดรูปซ้ำ
+              }
+            }
             const savedCount = await AssetStore.saveCount({
               clientId: it.clientId, sessionId: it.sessionId, site: it.site,
               assetType: it.assetType, categoryCode: it.categoryCode, counted: it.counted,
               locationText: it.locationText || '', note: it.note || '',
+              gpsLat: it.gpsLat == null ? null : it.gpsLat,
+              gpsLng: it.gpsLng == null ? null : it.gpsLng,
+              gpsAccuracy: it.gpsAccuracy == null ? null : it.gpsAccuracy,
+              photoPaths: cPhotos.map((p) => p.path).filter(Boolean),
               inspector: it.inspector, countedAt: it.countedAt
             });
             await qDel(it.clientId);
@@ -469,7 +481,11 @@ const App = (() => {
       countId: 'sent-' + it.clientId, clientId: it.clientId, sessionId: it.sessionId,
       site: it.site, assetType: it.assetType, categoryCode: it.categoryCode,
       counted: it.counted, locationText: it.locationText, note: it.note,
-      inspector: it.inspector, countedAt: it.countedAt
+      inspector: it.inspector, countedAt: it.countedAt,
+      gpsLat: it.gpsLat == null ? null : it.gpsLat,
+      gpsLng: it.gpsLng == null ? null : it.gpsLng,
+      gpsAccuracy: it.gpsAccuracy == null ? null : it.gpsAccuracy,
+      photoPaths: (it.photos || []).map((p) => p.path).filter(Boolean)
     };
   }
   function isNetworkError(msg) {
@@ -567,7 +583,11 @@ const App = (() => {
       countId: 'pending-' + it.clientId, clientId: it.clientId, sessionId: it.sessionId,
       site: it.site, assetType: it.assetType, categoryCode: it.categoryCode,
       counted: it.counted, locationText: it.locationText, note: it.note,
-      inspector: it.inspector, countedAt: it.countedAt, pending: true
+      inspector: it.inspector, countedAt: it.countedAt, pending: true,
+      gpsLat: it.gpsLat == null ? null : it.gpsLat,
+      gpsLng: it.gpsLng == null ? null : it.gpsLng,
+      gpsAccuracy: it.gpsAccuracy == null ? null : it.gpsAccuracy,
+      photoPaths: [], photoCount: (it.photos || []).length
     }));
   }
   /** ยอดนับทั้งหมดของรอบที่เปิดอยู่ (ที่ส่งแล้ว + ที่ยังค้างส่ง) */
@@ -592,18 +612,30 @@ const App = (() => {
     const map = new Map();
     const piecesSeen = new Map();      // inv → Set(pieceNo)
     const recSeen = new Map();         // inv → จำนวนครั้งที่ถูกบันทึกทั้งหมด
+    const whoSeen = new Map();         // inv → Map(pieceNo → Set(คนที่บันทึกชิ้นนั้น))
     allLogs().forEach((l) => {
       if (isNewer(l, map.get(l.inventoryNumber))) map.set(l.inventoryNumber, l);
+      const piece = Number(l.pieceNo) > 0 ? Number(l.pieceNo) : 1;
       const set = piecesSeen.get(l.inventoryNumber) || new Set();
-      set.add(Number(l.pieceNo) > 0 ? Number(l.pieceNo) : 1);
+      set.add(piece);
       piecesSeen.set(l.inventoryNumber, set);
       recSeen.set(l.inventoryNumber, (recSeen.get(l.inventoryNumber) || 0) + 1);
+      const byPiece = whoSeen.get(l.inventoryNumber) || new Map();
+      const who = byPiece.get(piece) || new Set();
+      who.add(String(l.createdBy || l.inspector || ''));
+      byPiece.set(piece, who);
+      whoSeen.set(l.inventoryNumber, byPiece);
     });
     // แนบจำนวนชิ้น + จำนวนครั้งที่บันทึกให้ record ล่าสุด เพื่อให้ตาราง/ตัวกรองใช้ได้ทันที
     map.forEach((l, inv) => {
       const set = piecesSeen.get(inv);
       l.pieces = set ? set.size : 1;
       l.records = recSeen.get(inv) || 1;
+      // ชิ้นเดียวกันถูกบันทึกโดยคนละคน = บันทึกทับกัน ต้องเตือน
+      // ส่วนการกด "แก้ไขผลเดิม" ของตัวเอง เป็นการแก้ให้ถูก ไม่ใช่ของซ้ำ จึงไม่นับ
+      let clash = false;
+      (whoSeen.get(inv) || new Map()).forEach((who) => { if (who.size > 1) clash = true; });
+      l.clash = clash;
     });
     state.latest = map;
     rebuildIdIndex();
@@ -1016,6 +1048,9 @@ const App = (() => {
     if (state.page === 'activity') renderActivity();
     // โหมดต่อเนื่องเปิดค้างอยู่ = ให้ตัวนับและรายการล่าสุดขยับตามของที่เพื่อนบันทึกเข้ามาด้วย
     if (state.bulk.cats.length && !el('bulkModal').classList.contains('hidden')) updateBulkView();
+    // หน้านับจำนวนเปิดค้างอยู่ก็ต้องรีเฟรชด้วย ไม่งั้นแถว "รอส่ง" ยังค้างอยู่หลังส่งขึ้นเซิร์ฟเวอร์แล้ว
+    // (ปุ่มดูรูปในแถวเก่าจะชี้ไปที่รายการที่ไม่มีอยู่แล้ว กดแล้วไม่มีอะไรเกิดขึ้น)
+    if (!el('countModal').classList.contains('hidden')) updateCountView();
     updateSyncChip();
   }
 
@@ -1845,7 +1880,7 @@ const App = (() => {
       });
     }
     if (ui.status === 'dup') {
-      // ซ้ำ = RT code เดียวพบหลายชิ้น หรือถูกบันทึกมากกว่า 1 ครั้ง (แก้ผลเดิม/สองคนบันทึกชนกัน)
+      // ซ้ำ = RT code เดียวพบหลายชิ้น หรือชิ้นเดียวกันมีคนอื่นบันทึกทับ (แก้ผลเดิมเองไม่นับ)
       list = list.filter((a) => isDup(state.latest.get(a.inventoryNumber)));
     } else if (ui.status) {
       list = list.filter((a) => {
@@ -1866,18 +1901,18 @@ const App = (() => {
     }
     return sorted;
   }
-  /** ซ้ำ = พบหลายชิ้นในรหัสเดียว หรือรหัสนี้ถูกบันทึกมากกว่า 1 ครั้ง */
+  /** ซ้ำ = พบหลายชิ้นในรหัสเดียว หรือชิ้นเดียวกันถูกบันทึกโดยคนละคน (ไม่รวมการแก้ผลเดิมของตัวเอง) */
   function isDup(l) {
-    return Boolean(l && ((Number(l.pieces) || 1) > 1 || (Number(l.records) || 1) > 1));
+    return Boolean(l && ((Number(l.pieces) || 1) > 1 || l.clash));
   }
   function statusCell(latest) {
     const cls = classify(latest);
     const n = latest && latest.pieces > 1 ? latest.pieces : 0;
-    const rec = latest && !n && latest.records > 1 ? latest.records : 0;
+    const rec = latest && !n && latest.clash ? (Number(latest.records) || 2) : 0;
     return '<span class="pill st-' + cls + '">' + esc(statusLabel(latest)) + '</span>' +
       (n ? '<span class="dup-badge" title="RT code นี้ถูกบันทึก ' + n + ' ชิ้น">× ' + n + '</span>' : '') +
-      (rec ? '<span class="dup-badge rec" title="รหัสนี้ถูกบันทึก ' + rec +
-        ' ครั้ง (แก้ผลเดิม หรือมีคนบันทึกชนกัน) — เปิดดูประวัติได้">ซ้ำ ' + rec + '</span>' : '');
+      (rec ? '<span class="dup-badge rec" title="ชิ้นเดียวกันนี้มีคนอื่นบันทึกทับ (รวม ' + rec +
+        ' ครั้ง) — เปิดดูประวัติได้">ซ้ำ ' + rec + '</span>' : '');
   }
   function verifyMeta(l) {
     if (!l) return '<span class="text-faint">—</span>';
@@ -2684,7 +2719,10 @@ const App = (() => {
           lat: pos.coords.latitude, lng: pos.coords.longitude,
           acc: Math.round(pos.coords.accuracy || 0), at: Date.now()
         };
-      }, () => {}, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+      }, (err) => {
+        // จำไว้ว่าถูกปิดสิทธิ์ เพื่อบอกวิธีเปิดใหม่ตอนผู้ใช้กดปุ่มขอพิกัด
+        if (err && err.code === 1) state.geoDenied = true;
+      }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
     } catch (e) { state.geoWatch = null; }
   }
   function stopGeoWatch() {
@@ -2723,7 +2761,55 @@ const App = (() => {
     }, () => {
       if (state.rec !== rec) return;
       el('gpsLine').innerHTML = icon('pin') + ' ไม่ได้พิกัด GPS (ข้ามได้ ไม่บังคับ)';
+    }, (err) => {
+      if (state.rec !== rec) return;
+      if (err && err.code === 1) state.geoDenied = true;
+      el('gpsLine').innerHTML = icon('pin') + ' ไม่ได้พิกัด GPS — แตะปุ่มข้างๆ เพื่อลองใหม่ (ข้ามได้ ไม่บังคับ)';
     }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 120000 });
+  }
+  /** ขอพิกัดครั้งเดียวแบบสดๆ (ไม่เอาค่าที่แคชไว้) — ใช้กับปุ่ม "ขอพิกัด" ที่ผู้ใช้กดเอง */
+  function askGeo() {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) return reject({ code: 0 });
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({
+          lat: pos.coords.latitude, lng: pos.coords.longitude,
+          acc: Math.round(pos.coords.accuracy || 0)
+        }),
+        (err) => reject(err || { code: 2 }),
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+    });
+  }
+  /** บอกสาเหตุที่ขอพิกัดไม่ได้ พร้อมวิธีแก้ — กรณีปิดสิทธิ์ไปแล้วต้องเปิดจากเบราว์เซอร์เท่านั้น */
+  function geoErrText(err) {
+    const code = err && err.code;
+    if (code === 0) return 'เครื่องนี้ไม่รองรับ GPS (ข้ามได้ ไม่บังคับ)';
+    if (code === 1) {
+      return 'สิทธิ์ตำแหน่งถูกปิดไว้ — iPhone: ตั้งค่า → Safari → ตำแหน่ง → "ถาม" ' +
+        '· Android Chrome: แตะรูปกุญแจ/ไอคอนหน้า URL → สิทธิ์ → ตำแหน่ง → อนุญาต แล้วกดปุ่มนี้อีกครั้ง';
+    }
+    if (code === 3) return 'หาพิกัดไม่ทัน (สัญญาณอ่อน) — ออกไปที่โล่งแล้วกดอีกครั้ง';
+    return 'ขอพิกัดไม่สำเร็จ — กดอีกครั้ง หรือเปิด GPS ของเครื่องก่อน';
+  }
+  /** ปุ่มขอพิกัดในฟอร์มบันทึกผลตรวจ */
+  async function retryGps() {
+    if (!state.rec) return;
+    const line = el('gpsLine');
+    line.className = 'gps-line';
+    line.innerHTML = icon('pin') + ' กำลังขอพิกัดใหม่...';
+    try {
+      const g = await askGeo();
+      state.rec.gps = g;
+      state.geo = { lat: g.lat, lng: g.lng, acc: g.acc, at: Date.now() };
+      state.geoDenied = false;
+      startGeoWatch();                          // ได้สิทธิ์แล้ว เปิดตัวติดตามต่อให้วิธีอื่นใช้ด้วย
+      line.className = 'gps-line ok';
+      line.innerHTML = icon('pin') + ' ได้พิกัดแล้ว (±' + g.acc + ' ม.)';
+    } catch (err) {
+      if (err && err.code === 1) state.geoDenied = true;
+      line.className = 'gps-line bad';
+      line.innerHTML = icon('pin') + ' ' + esc(geoErrText(err));
+    }
   }
   function resizeImage(file, maxDimension, quality) {
     return new Promise((resolve, reject) => {
@@ -3798,6 +3884,10 @@ const App = (() => {
     el('countNote').value = '';
     el('countN').value = '1';
     state.count.n = 1;
+    state.count.photos = [];
+    state.count.gps = currentGeo();            // มีพิกัดสดอยู่แล้วก็ใช้เลย ไม่ต้องกดขอ
+    renderCountPhotos();
+    renderCountGps();
     updateCountView();
     el('countModal').classList.remove('hidden');
   }
@@ -3849,15 +3939,28 @@ const App = (() => {
       '(ยอดนับด้านบนเป็นคนละส่วนกัน ไม่กระทบผลรายชิ้น)</p>';
     const list = countEntriesOf(cat);
     el('countHistory').innerHTML = list.length
-      ? list.map((c) => '<div class="count-row">' +
+      ? list.map((c) => {
+        const nPhoto = (c.photoPaths || []).length || c.photoCount || 0;
+        const hasGps = c.gpsLat != null && c.gpsLng != null;
+        return '<div class="count-row">' +
           '<div><b>' + (Number(c.counted) || 0) + ' ชิ้น</b>' +
           (c.locationText ? ' · ' + esc(c.locationText) : '') +
           (c.note ? ' · ' + esc(c.note) : '') +
           '<small>' + esc(thaiDT(c.countedAt)) + ' · ' + esc(c.inspector || '') +
-          (c.pending ? ' · รอส่ง' : '') + '</small></div>' +
+          (c.pending ? ' · รอส่ง' : '') + '</small>' +
+          (nPhoto || hasGps ? '<div class="count-tags">' +
+            (nPhoto ? '<button type="button" class="chip mini" onclick="App.openCountPhotos(\'' +
+              esc(c.countId) + '\')">' + icon('camera') + ' ' + nPhoto + ' รูป</button>' : '') +
+            (hasGps ? '<a class="gps-link" target="_blank" rel="noopener" ' +
+              'href="https://www.google.com/maps/search/?api=1&query=' +
+              encodeURIComponent(c.gpsLat + ',' + c.gpsLng) + '">' + icon('pin') + ' ดูพิกัด' +
+              (c.gpsAccuracy ? ' ±' + Math.round(c.gpsAccuracy) + ' ม.' : '') + '</a>' : '') +
+            '</div>' : '') +
+          '</div>' +
           (canEditCount(c) ? '<button class="qbtn del" type="button" title="ลบยอดนี้" ' +
             'onclick="App.deleteCountEntry(\'' + esc(c.countId) + '\')">' + icon('trash') + '</button>' : '') +
-          '</div>').join('')
+          '</div>';
+      }).join('')
       : '<p class="hint">ยังไม่มีการนับในหมวดนี้</p>';
   }
   const COUNT_CLASH_WINDOW = 10 * 60 * 1000;
@@ -3872,6 +3975,92 @@ const App = (() => {
       String(c.locationText || '').trim().toLowerCase() === loc &&
       now - new Date(c.countedAt).getTime() < COUNT_CLASH_WINDOW)
       .sort((a, b) => String(a.countedAt).localeCompare(String(b.countedAt))).pop() || null;
+  }
+  // ── รูปถ่าย + พิกัดของยอดนับ (ใช้เป็นหลักฐานว่านับกองไหน ตรงไหน) ──────────
+  async function addCountPhotos(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!files.length) return;
+    state.count.photos = state.count.photos || [];
+    if (state.count.photos.length + files.length > 5) {
+      return toast('แนบได้สูงสุด 5 รูปต่อการนับ 1 ครั้ง', 'warn');
+    }
+    busy('กำลังย่อรูป...');
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const dataUrl = await resizeImage(files[i], 1280, 0.82);   // ขนาดเดียวกับรูปผลตรวจ
+        state.count.photos.push({ dataUrl: dataUrl });
+      }
+      renderCountPhotos();
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally { busyHide(); }
+  }
+  function removeCountPhoto(i) {
+    (state.count.photos || []).splice(i, 1);
+    renderCountPhotos();
+  }
+  function renderCountPhotos() {
+    const strip = el('countPhotoStrip');
+    if (!strip) return;
+    strip.innerHTML = (state.count.photos || []).map((p, i) =>
+      '<div class="photo-thumb"><img src="' + p.dataUrl + '" alt="">' +
+      '<button type="button" onclick="App.removeCountPhoto(' + i + ')">' + icon('close') +
+      '</button></div>').join('');
+  }
+  function renderCountGps() {
+    const line = el('countGpsLine');
+    if (!line) return;
+    const g = state.count.gps;
+    line.className = 'gps-line' + (g ? ' ok' : '');
+    line.innerHTML = icon('pin') + (g
+      ? ' พิกัดพร้อมบันทึก (±' + g.acc + ' ม.)'
+      : ' ยังไม่มีพิกัด — แตะปุ่มข้างๆ เพื่อขอตำแหน่ง (ข้ามได้ ไม่บังคับ)');
+  }
+  /** ปุ่มขอพิกัดของหน้านับจำนวน — กดได้เรื่อยๆ แม้เคยกดไม่อนุญาตไปแล้ว */
+  async function grabCountGps() {
+    const line = el('countGpsLine');
+    line.className = 'gps-line';
+    line.innerHTML = icon('pin') + ' กำลังขอพิกัด...';
+    try {
+      const g = await askGeo();
+      state.count.gps = g;
+      state.geo = { lat: g.lat, lng: g.lng, acc: g.acc, at: Date.now() };
+      state.geoDenied = false;
+      startGeoWatch();
+      renderCountGps();
+    } catch (err) {
+      if (err && err.code === 1) state.geoDenied = true;
+      line.className = 'gps-line bad';
+      line.innerHTML = icon('pin') + ' ' + esc(geoErrText(err));
+    }
+  }
+  /** เปิดดูรูปของยอดนับครั้งนั้น (ใช้ตัวดูรูปตัวเดียวกับผลตรวจรายชิ้น) */
+  async function openCountPhotos(countId) {
+    const c = allCounts().find((x) => String(x.countId) === String(countId));
+    if (!c) return;
+    let items = [];
+    if (c.pending) {
+      const q = state.queueItems.find((x) => x.clientId === c.clientId);
+      items = ((q && q.photos) || []).map((p) => p.dataUrl).filter(Boolean);
+    } else {
+      const paths = c.photoPaths || [];
+      if (!paths.length) return toast('การนับครั้งนี้ไม่มีรูป', 'warn');
+      try {
+        busy('กำลังเปิดรูป...');
+        const urls = await AssetStore.photoUrls(paths);
+        items = paths.map((p) => urls[p]).filter(Boolean);
+      } catch (e) {
+        return toast('เปิดรูปไม่ได้: ' + e.message, 'error');
+      } finally { busyHide(); }
+    }
+    if (!items.length) return toast('เปิดรูปไม่ได้ (อาจถูกลบไปแล้ว)', 'warn');
+    state.photos = { items: items, i: 0, log: null };
+    el('photoTitle').textContent = catLabel(c.categoryCode) + ' · ' + (Number(c.counted) || 0) + ' ชิ้น';
+    el('photoSub').textContent = (c.locationText ? c.locationText + ' · ' : '') +
+      (c.inspector || '') + ' · ' + thaiDT(c.countedAt) + (c.pending ? ' · ยังไม่ได้ส่ง' : '');
+    renderPhotoView();
+    el('photoModal').classList.remove('hidden');
   }
   function canEditCount(c) {
     if (!state.profile) return false;
@@ -3898,11 +4087,14 @@ const App = (() => {
       ' เมื่อ ' + thaiDT(clash.countedAt) + '\n\n' +
       'ยอดของคุณจะถูกบวกเพิ่มจากยอดเดิม (ไม่ใช่แทนที่) — ถ้าเป็นกองเดียวกันจะกลายเป็นนับซ้ำ\n\n' +
       'ยืนยันบันทึกต่อ?')) return;
+    const g = state.count.gps || currentGeo();
     const item = {
       kind: 'count', clientId: AssetStore.uuid(), sessionId: s.sessionId, site: s.site,
       assetType: state.ui.type, categoryCode: cat, counted: n,
       locationText: location, note: el('countNote').value.trim(),
-      inspector: inspectorName(), countedAt: new Date().toISOString()
+      inspector: inspectorName(), countedAt: new Date().toISOString(),
+      photos: (state.count.photos || []).map((p) => ({ dataUrl: p.dataUrl })),
+      gpsLat: g ? g.lat : null, gpsLng: g ? g.lng : null, gpsAccuracy: g ? g.acc : null
     };
     try {
       await qPut(item);
@@ -5342,13 +5534,19 @@ const App = (() => {
         cnt.getCell(cr, 1).value = 'รายละเอียดการนับแต่ละครั้ง';
         cnt.getCell(cr, 1).font = { name: 'Tahoma', size: 11, bold: true };
         cr++;
-        const dHead = ['เวลาที่นับ', 'หมวด', 'ประเภท', 'จำนวน (ชิ้น)', 'จุดที่นับ', 'ผู้นับ', 'หมายเหตุ'];
+        const dHead = ['เวลาที่นับ', 'หมวด', 'ประเภท', 'จำนวน (ชิ้น)', 'จุดที่นับ', 'ผู้นับ', 'หมายเหตุ',
+          'Latitude', 'Longitude', 'ความแม่นยำ (ม.)', 'จำนวนรูป'];
         dHead.forEach((h, i) => { styleHeadCell(cnt.getCell(cr, i + 1)).value = h; });
         countsAll.slice().sort((a, b) => String(a.countedAt).localeCompare(String(b.countedAt)))
           .forEach((c, i) => {
+            const cHasGps = c.gpsLat != null && c.gpsLng != null;
             [thaiDT(c.countedAt), catLabel(c.categoryCode),
               c.assetType === 'RENTAL' ? 'ของเช่า' : 'Fixed', Number(c.counted) || 0,
-              c.locationText || '', c.inspector || '', c.note || ''
+              c.locationText || '', c.inspector || '', c.note || '',
+              cHasGps ? Number(Number(c.gpsLat).toFixed(6)) : null,
+              cHasGps ? Number(Number(c.gpsLng).toFixed(6)) : null,
+              cHasGps && c.gpsAccuracy ? Math.round(c.gpsAccuracy) : null,
+              (c.photoPaths || []).length || c.photoCount || 0
             ].forEach((v, col) => {
               const cell = cnt.getCell(cr + 1 + i, col + 1);
               cell.value = v === '' ? null : v;
@@ -5680,6 +5878,23 @@ const App = (() => {
       const use = ev.target.closest('.brec-main');
       if (use) bulkUseCode(use.dataset.code);
     });
+    // ปุ่มกากบาทล้างคำค้นหา — Safari บนมือถือไม่แสดงปุ่มล้างของตัวเองให้ ต้องทำเอง
+    document.querySelectorAll('.search-box, .combo-search-box').forEach((box) => {
+      const input = box.querySelector('input');
+      const btn = box.querySelector('.search-clear');
+      if (!input || !btn) return;
+      const sync = () => btn.classList.toggle('hidden', !input.value);
+      input.addEventListener('input', sync);
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        input.value = '';
+        input.dispatchEvent(new Event('input', { bubbles: true }));   // เรียก handler เดิมของช่องนั้น
+        input.focus();
+        sync();
+      });
+      sync();
+    });
     el('colPanel').addEventListener('click', (ev) => ev.stopPropagation());
     el('actList').addEventListener('click', (ev) => ev.stopPropagation());
     applyTheme(cacheGet('avTheme') || 'porcelain');
@@ -5708,6 +5923,7 @@ const App = (() => {
     setMapWho, setMapRange, setMapArea,
     toggleColPicker, closeColPicker, toggleCol, pickAllCols, resetCols,
     openCountSheet, closeCount, setCountCat, adjustCount, saveCountEntry, deleteCountEntry,
+    addCountPhotos, removeCountPhoto, grabCountGps, openCountPhotos, retryGps,
     setActWho, setActResult, setActRange, setActSort, setActSearch,
     clearSelection, applySelection, quickSave, deleteSelectedHistory, setTheme,
     openAsset, closeRecord, chooseResult, saveRecord,

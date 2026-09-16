@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.9.6">
+  <link rel="stylesheet" href="styles.css?v=2.9.7">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -86,6 +86,7 @@
         <div class="toolbar">
           <label class="search-box"><span data-icon="search"></span>
             <input id="homeSearch" type="search" placeholder="ค้นหา: โครงการ / ผู้ตรวจ / วันที่" oninput="App.setHomeSearch(this.value)">
+            <button type="button" class="search-clear hidden" tabindex="-1" aria-label="ล้างคำค้นหา"><span data-icon="close"></span></button>
           </label>
           <div class="filter-row">
             <select id="homeStatus" class="filter-select" onchange="App.setHomeStatus(this.value)">
@@ -169,6 +170,7 @@
         <div class="toolbar">
           <label class="search-box"><span data-icon="search"></span>
             <input id="search" type="search" placeholder="ค้นหา: รหัส / ชื่อ / Serial / ผู้รับผิดชอบ" oninput="App.setSearch(this.value)">
+            <button type="button" class="search-clear hidden" tabindex="-1" aria-label="ล้างคำค้นหา"><span data-icon="close"></span></button>
           </label>
           <div class="filter-row">
             <select id="catFilter" class="filter-select" onchange="App.setCat(this.value)"><option value="">ทุกหมวด</option></select>
@@ -241,6 +243,7 @@
         <div class="toolbar">
           <label class="search-box"><span data-icon="search"></span>
             <input id="actSearch" type="search" placeholder="ค้นหา: RT code / ตำแหน่งที่ตรวจ" oninput="App.setActSearch(this.value)">
+            <button type="button" class="search-clear hidden" tabindex="-1" aria-label="ล้างคำค้นหา"><span data-icon="close"></span></button>
           </label>
           <div class="filter-row">
             <select id="actWho" class="filter-select" onchange="App.setActWho(this.value)">
@@ -436,7 +439,11 @@
             <label class="tool-button"><span data-icon="image"></span> จากแกลเลอรี<input id="photoGal" type="file" accept="image/*" multiple hidden onchange="App.addPhotos(event)"></label>
           </div>
 
-          <p id="gpsLine" class="gps-line"><span data-icon="pin"></span> กำลังหาพิกัด GPS...</p>
+          <div class="gps-row">
+            <p id="gpsLine" class="gps-line"><span data-icon="pin"></span> กำลังหาพิกัด GPS...</p>
+            <button id="recGpsBtn" class="gps-btn" type="button" onclick="App.retryGps()"
+              title="ขอพิกัด GPS อีกครั้ง" aria-label="ขอพิกัด GPS อีกครั้ง"><span data-icon="pin"></span></button>
+          </div>
           <button id="recSave" class="primary-button full-width big-save" type="submit">บันทึกผลตรวจ</button>
         </form>
       </div>
@@ -459,7 +466,8 @@
           <div id="bulkCatPanel" class="combo-panel multi-panel hidden">
             <label class="combo-search-box"><span data-icon="search"></span>
               <input id="bulkCatSearch" type="search" class="combo-search" placeholder="พิมพ์เพื่อค้นหาหมวด..."
-                autocomplete="off" oninput="App.renderCatPicker()"></label>
+                autocomplete="off" oninput="App.renderCatPicker()">
+              <button type="button" class="search-clear hidden" tabindex="-1" aria-label="ล้างคำค้นหา"><span data-icon="close"></span></button></label>
             <div class="multi-tools">
               <button type="button" class="chip" onclick="App.pickAllCats(true)">เลือกทั้งหมด</button>
               <button type="button" class="chip" onclick="App.pickAllCats(false)">ล้าง</button>
@@ -582,6 +590,20 @@
           </span></label>
         <label class="field"><span>หมายเหตุ (ไม่บังคับ)</span>
           <input id="countNote" type="text" placeholder="เช่น กองรวมยังไม่ติดสติกเกอร์"></label>
+
+        <p class="form-label">รูปถ่ายกองที่นับ (ไม่บังคับ)</p>
+        <div id="countPhotoStrip" class="photo-strip"></div>
+        <div class="photo-buttons">
+          <label class="tool-button"><span data-icon="camera"></span> ถ่ายรูป<input id="countPhotoCam" type="file" accept="image/*" capture="environment" hidden onchange="App.addCountPhotos(event)"></label>
+          <label class="tool-button"><span data-icon="image"></span> จากแกลเลอรี<input id="countPhotoGal" type="file" accept="image/*" multiple hidden onchange="App.addCountPhotos(event)"></label>
+        </div>
+
+        <div class="gps-row">
+          <p id="countGpsLine" class="gps-line"><span data-icon="pin"></span> ยังไม่มีพิกัด</p>
+          <button id="countGpsBtn" class="gps-btn" type="button" onclick="App.grabCountGps()"
+            title="บันทึกพิกัด GPS ตอนนี้" aria-label="บันทึกพิกัด GPS ตอนนี้"><span data-icon="pin"></span></button>
+        </div>
+
         <button class="primary-button full-width big-save" type="button" onclick="App.saveCountEntry()">
           บันทึกยอดนับ</button>
         <div id="countCompare" class="count-compare"></div>
@@ -656,6 +678,7 @@
         <label class="search-box"><span data-icon="search"></span>
           <input id="areaPickSearch" type="search" placeholder="ค้นหาพื้นที่ / พิมพ์ชื่อใหม่"
             oninput="App.setAreaPickSearch(this.value)">
+          <button type="button" class="search-clear hidden" tabindex="-1" aria-label="ล้างคำค้นหา"><span data-icon="close"></span></button>
         </label>
         <div id="areaPickList" class="area-pick-list"></div>
       </div>
@@ -668,9 +691,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.9.6" defer></script>
-  <script src="config.js?v=2.9.6"></script>
-  <script src="src/assetStore.js?v=2.9.6"></script>
-  <script src="app.js?v=2.9.6"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.9.7" defer></script>
+  <script src="config.js?v=2.9.7"></script>
+  <script src="src/assetStore.js?v=2.9.7"></script>
+  <script src="app.js?v=2.9.7"></script>
 </body>
 </html>

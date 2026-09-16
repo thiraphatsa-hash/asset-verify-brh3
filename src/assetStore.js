@@ -343,22 +343,40 @@ const AssetStore = (function () {
       throw e;
     }
   }
+  // คอลัมน์รูป/พิกัดของยอดนับมาทีหลัง (asset-count-media.sql) — ถ้ายังไม่ได้รัน
+  // ต้องยังบันทึกจำนวนให้ได้อยู่ ไม่ใช่ทิ้งยอดที่นับมาทั้งกอง
+  const NO_COUNT_MEDIA = /(gps_lat|gps_lng|gps_accuracy|photo_paths)/i;
   async function saveCount(rec) {
-    const { data, error } = await getClient().from('asset_count_log')
-      .insert(objToRow(rec)).select().maybeSingle();
-    if (error) {
+    let payload = rec;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { data, error } = await getClient().from('asset_count_log')
+        .insert(objToRow(payload)).select().maybeSingle();
+      if (!error) return rowToObj(data);
       if (error.code === '23505' || /duplicate key/i.test(error.message || '')) {
         const found = await getClient().from('asset_count_log').select('*')
           .eq('client_id', rec.clientId).maybeSingle();
         if (found.data) return rowToObj(found.data);
         return { duplicate: true };
       }
-      if (NO_COUNT_TABLE.test(error.message || '')) {
+      // ต้องเช็คเรื่องคอลัมน์รูป/พิกัดก่อนเสมอ — ข้อความของ PostgREST คือ
+      // "Could not find the 'gps_lat' column ... in the schema cache" ซึ่งเข้าเงื่อนไข
+      // NO_COUNT_TABLE ด้วย ถ้าเช็คสลับกันจะกลายเป็นฟ้องว่ายังไม่ได้ติดตั้ง แล้วยอดนับหายทั้งกอง
+      const missingMedia = NO_COUNT_MEDIA.test(error.message || '') &&
+        /does not exist|schema cache|column/i.test(error.message || '');
+      if (!missingMedia && NO_COUNT_TABLE.test(error.message || '')) {
         throw new Error('ยังไม่ได้ติดตั้งโหมดนับจำนวน — รันไฟล์ asset-counts.sql ใน Supabase SQL Editor ก่อน');
+      }
+      if (attempt === 0 && missingMedia) {
+        payload = Object.assign({}, rec);
+        delete payload.gpsLat;
+        delete payload.gpsLng;
+        delete payload.gpsAccuracy;
+        delete payload.photoPaths;
+        continue;                       // ลองใหม่แบบไม่มีรูป/พิกัด
       }
       throw new Error(error.message);
     }
-    return rowToObj(data);
+    return { duplicate: true };
   }
   async function deleteCount(countId) {
     const { error } = await getClient().from('asset_count_log')
