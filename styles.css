@@ -756,6 +756,7 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 .copy-src input { margin-top: 3px; }
 .copy-src small { display: block; color: var(--faint); font-size: 12.5px; margin-top: 2px; }
 .upload-zone.small { padding: 12px; font-size: 13.5px; margin-bottom: 10px; }
+.upload-zone.small.ok { border-color: var(--ok); background: var(--ok-bg); color: var(--ok); }
 .copy-preview { margin-top: 12px; }
 .copy-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 @media (max-width: 560px) { .copy-stats { grid-template-columns: repeat(2, 1fr); } }

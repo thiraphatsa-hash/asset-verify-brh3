@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.9.8';
+  const APP_VERSION = 'v2.9.9';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -1547,10 +1547,15 @@ const App = (() => {
     if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
     if (!state.canWrite) return toast('เฉพาะผู้ตรวจหรือผู้ดูแลเท่านั้นที่คัดลอกผลตรวจได้', 'warn');
     if (!navigator.onLine) return toast('ต้องต่ออินเทอร์เน็ตก่อน — ต้องโหลดผลตรวจของรอบอื่นจากเซิร์ฟเวอร์', 'warn');
-    state.copy = { sources: [], yesCodes: null, yesFile: '', plan: null, mode: 'latest' };
+    // ไฟล์ที่ติ๊ก Yes จำไว้ต่อรอบ — เดิมปิดหน้าต่างแล้วเปิดใหม่ ไฟล์ที่เลือกไว้หายเงียบๆ
+    const kept = state.copyYes && state.copyYes.sessionId === s.sessionId ? state.copyYes : null;
+    state.copy = {
+      sources: [], plan: null, mode: 'latest',
+      yesCodes: kept ? kept.codes : null, yesFile: kept ? kept.file : '', yesSheets: kept ? kept.sheets : ''
+    };
     el('copySub').textContent = 'ปลายทาง: ' + s.site + (s.roundName ? ' · ' + s.roundName : '') +
       ' · ทะเบียน ' + state.master.length + ' รายการ';
-    el('copyFileText').textContent = COPY_FILE_HINT;
+    renderCopyFileText();
     renderCopySources();
     invalidateCopyPlan();
     el('copyModal').classList.remove('hidden');
@@ -1558,6 +1563,20 @@ const App = (() => {
   function closeCopy() {
     el('copyModal').classList.add('hidden');
     state.copy = null;
+  }
+  /** บอกสถานะไฟล์ที่ติ๊ก Yes ให้ชัด — เลือกแล้วขึ้นชื่อไฟล์สีเขียว ยังไม่เลือกขึ้นคำแนะนำ */
+  function renderCopyFileText() {
+    const c = state.copy;
+    const box = el('copyFileText');
+    const zone = box.parentElement;
+    if (c && c.yesCodes) {
+      box.innerHTML = icon('check') + ' ' + esc(c.yesFile) + ' — ติ๊ก Yes <b>' + c.yesCodes.size +
+        '</b> รหัส <small>(' + esc(c.yesSheets || '') + ') · แตะเพื่อเปลี่ยนไฟล์</small>';
+      zone.classList.add('ok');
+    } else {
+      box.textContent = COPY_FILE_HINT;
+      zone.classList.remove('ok');
+    }
   }
   function invalidateCopyPlan() {
     if (state.copy) state.copy.plan = null;
@@ -1632,13 +1651,21 @@ const App = (() => {
       if (!yes.size) throw new Error('ไม่พบช่อง Yes ที่ติ๊กไว้ในไฟล์นี้');
       state.copy.yesCodes = yes;
       state.copy.yesFile = file.name;
-      el('copyFileText').innerHTML = icon('note') + ' ' + esc(file.name) + ' — ติ๊ก Yes ' + yes.size +
-        ' รหัส <small>(' + esc(perSheet.join(' · ')) + ')</small>';
-      invalidateCopyPlan();
+      state.copy.yesSheets = perSheet.join(' · ');
+      state.copyYes = {
+        sessionId: state.activeSession.sessionId, codes: yes, file: file.name, sheets: state.copy.yesSheets
+      };
+      renderCopyFileText();
+      // กดตรวจสอบไปแล้วค่อยเลือกไฟล์ → อัปเดตตัวเลขทันที ไม่ต้องโหลดผลตรวจใหม่
+      if (state.copy.plan) renderCopyPlan();
+      toast('อ่านไฟล์แล้ว — ติ๊ก Yes ' + yes.size + ' รหัส', 'success');
     } catch (e) {
       state.copy.yesCodes = null;
       state.copy.yesFile = '';
-      el('copyFileText').textContent = COPY_FILE_HINT;
+      state.copy.yesSheets = '';
+      state.copyYes = null;
+      renderCopyFileText();
+      if (state.copy.plan) renderCopyPlan();
       toast(e.message, 'error');
     } finally {
       busyHide();
@@ -1781,7 +1808,9 @@ const App = (() => {
     let html = '<div class="copy-stats">' +
         stat(p.srcLogs.length, 'ผลตรวจในรอบต้นทาง') +
         stat(b.logRows.length, 'จะคัดลอก', 'ok') +
-        stat(b.yesRows.length, 'ติ๊ก Yes → บันทึกพบ', 'ok') +
+        (c.yesCodes
+          ? stat(b.yesRows.length, 'ติ๊ก Yes → บันทึกพบ', 'ok')
+          : stat('—', 'ติ๊ก Yes: ยังไม่ได้เลือกไฟล์', 'warn')) +
         stat(reg - b.checkedAfter, 'ยังไม่ตรวจหลังคัดลอก', 'bad') +
       '</div>' +
       '<ul class="copy-notes">' +
@@ -1792,9 +1821,14 @@ const App = (() => {
         (p.skipped.length ? '<li>ข้าม <b>' + p.skipped.length + '</b> ครั้ง (' + skippedCodes.length +
           ' รหัส) — ไม่อยู่ในทะเบียนรอบนี้ (ถูกตัดออกจากทะเบียนแล้ว)' + fullList(skippedCodes) + '</li>' : '') +
         (b.alreadyLogs ? '<li>' + b.alreadyLogs + ' ครั้งเคยคัดลอกเข้ารอบนี้แล้ว — ข้ามให้</li>' : '') +
-        (c.yesCodes ? '<li>ไฟล์ ' + esc(c.yesFile) + ' ติ๊ก Yes ' + c.yesCodes.size + ' รหัส — ในนี้ ' +
-          '<b>' + b.yesRows.length + '</b> รหัสไม่มีผลตรวจในระบบ จะบันทึกเป็น "พบ" (MANUAL พร้อมหมายเหตุ)' +
-          (b.yesRows.length ? fullList(b.yesRows.map((r) => r.inventoryNumber)) : '') + '</li>' : '') +
+        (c.yesCodes
+          ? '<li>ไฟล์ ' + esc(c.yesFile) + ' ติ๊ก Yes ' + c.yesCodes.size + ' รหัส — ' +
+            (b.yesRows.length
+              ? 'ในนี้ <b>' + b.yesRows.length + '</b> รหัสไม่มีผลตรวจในระบบ จะบันทึกเป็น "พบ" (MANUAL พร้อมหมายเหตุ)' +
+                fullList(b.yesRows.map((r) => r.inventoryNumber))
+              : 'ทุกรหัสมีผลตรวจในระบบอยู่แล้ว ไม่ต้องเพิ่ม') + '</li>'
+          : '<li class="warn-inline">ยังไม่ได้เลือกไฟล์ที่ติ๊ก Yes (ข้อ 2) — รหัสที่ติ๊ก Yes ในไฟล์แต่ไม่มีผลตรวจในระบบ ' +
+            'จะยังนับเป็น "ยังไม่ตรวจ" · เลือกไฟล์ได้เลย ตัวเลขอัปเดตทันทีไม่ต้องกดตรวจสอบใหม่</li>') +
         (p.srcCounts.length ? '<li>ยอดนับตามหมวด <b>' + b.countRows.length + '</b> ครั้ง' +
           (b.alreadyCounts ? ' (เคยคัดลอกแล้ว ' + b.alreadyCounts + ' ครั้ง)' : '') + '</li>' : '') +
       '</ul>';
@@ -1841,7 +1875,8 @@ const App = (() => {
     const logs = b.logRows.concat(b.yesRows);
     if (!logs.length && !b.countRows.length) return toast('ไม่มีอะไรต้องคัดลอกแล้ว', 'warn');
     if (!window.confirm('คัดลอกเข้ารอบ ' + s.site + (s.roundName ? ' · ' + s.roundName : '') + '\n' +
-      '• ผลตรวจ ' + b.logRows.length + ' ครั้ง\n• ติ๊ก Yes → พบ ' + b.yesRows.length + ' รหัส\n' +
+      '• ผลตรวจ ' + b.logRows.length + ' ครั้ง\n• ติ๊ก Yes → พบ ' +
+      (c.yesCodes ? b.yesRows.length + ' รหัส' : 'ยังไม่ได้เลือกไฟล์ (ข้ามส่วนนี้)') + '\n' +
       '• ยอดนับ ' + b.countRows.length + ' ครั้ง\n\nรอบต้นทางไม่ถูกแก้ ยืนยัน?')) return;
     try {
       let r1 = { inserted: 0 };
