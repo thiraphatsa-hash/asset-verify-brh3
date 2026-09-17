@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.9.9">
+  <link rel="stylesheet" href="styles.css?v=2.10.0">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -93,6 +93,7 @@
               <option value="">สถานะ: ทั้งหมด</option>
               <option value="active">กำลังตรวจ</option>
               <option value="done">เสร็จสิ้น</option>
+              <option value="hold">พักไว้ (Hold)</option>
             </select>
             <select id="homeSort" class="filter-select" onchange="App.setHomeSort(this.value)">
               <option value="created">เรียง: สร้างล่าสุด</option>
@@ -141,6 +142,9 @@
               <input id="roundInspector" type="text" placeholder="ชื่อหัวหน้าทีมตรวจ"></label>
             <label class="field"><span>หมายเหตุ</span>
               <textarea id="roundNote" rows="2" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"></textarea></label>
+            <label id="roundHoldRow" class="hold-check hidden"><input id="roundHold" type="checkbox">
+              <span><b>สร้างแบบพักไว้ (Hold)</b> — ผู้ตรวจยังเปิดรอบนี้ไม่ได้ จนกว่าผู้ดูแลจะกดเปิดใช้งาน
+                เหมาะกับรอบที่ต้องเตรียมข้อมูลก่อน (คัดลอกผล / เพิ่มรายการ / ตรวจเทียบ)</span></label>
             <div class="import-actions">
               <button class="outline-button" type="button" onclick="App.cancelImport()">ยกเลิก</button>
               <button class="primary-button" type="button" onclick="App.confirmImport()">สร้างรอบและนำเข้าทะเบียน</button>
@@ -720,9 +724,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.9.9" defer></script>
-  <script src="config.js?v=2.9.9"></script>
-  <script src="src/assetStore.js?v=2.9.9"></script>
-  <script src="app.js?v=2.9.9"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.10.0" defer></script>
+  <script src="config.js?v=2.10.0"></script>
+  <script src="src/assetStore.js?v=2.10.0"></script>
+  <script src="app.js?v=2.10.0"></script>
 </body>
 </html>

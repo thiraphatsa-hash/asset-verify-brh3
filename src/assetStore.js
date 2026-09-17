@@ -172,6 +172,13 @@ const AssetStore = (function () {
     }
     return rowToObj(data);
   }
+  /** สถานะล่าสุดของรอบเดียว — เช็คก่อนเปิดรอบว่าผู้ดูแลเพิ่งพักรอบไว้ (Hold) หรือไม่ */
+  async function loadSessionStatus(sessionId) {
+    const { data, error } = await getClient().from('asset_sessions')
+      .select('session_id,status').eq('session_id', sessionId).maybeSingle();
+    fail(error);
+    return data ? data.status : null;
+  }
   async function updateSession(sessionId, patch) {
     const { data, error } = await getClient().from('asset_sessions')
       .update(objToRow(patch)).eq('session_id', sessionId).select().maybeSingle();
@@ -494,7 +501,7 @@ const AssetStore = (function () {
     getClient, uuid,
     signIn, signOut, signUp, getSession, currentUser, getMyProfile,
     sendPasswordReset, listProfiles, updateProfile, deleteUserAccount, confirmUserEmail,
-    listSessions, createSession, updateSession, deleteSession,
+    listSessions, createSession, updateSession, deleteSession, loadSessionStatus,
     loadMaster, importAssets, addAssets, setAssetLocation, copyLogs, copyCounts,
     loadLogs, loadLogsSummary, saveVerify, deleteLog, deleteLogsFor, subscribeLogs, unsubscribe,
     loadCounts, saveCount, deleteCount,

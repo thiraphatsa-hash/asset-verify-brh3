@@ -745,6 +745,24 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 .gps-btn:active { transform: scale(.96); }
 .count-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .chip.mini { padding: 3px 10px; font-size: 12px; }
+/* ── พักรอบ (Hold) ─────────────────────────────────────────────────────── */
+.pill-hold { background: var(--surface-2); color: var(--muted); border: 1px dashed var(--faint); }
+.session-card.held { border-style: dashed; border-color: var(--faint); }
+.hold-note { margin: 0; font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.sc-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.hold-btn { white-space: nowrap; }
+.rb-hold {
+  flex-basis: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px;
+  background: var(--surface-2); border: 1px dashed var(--faint); border-radius: var(--r); padding: 8px 10px;
+}
+.rb-hold > span { flex: 1; min-width: 200px; }
+.rb-hold .outline-button { padding: 6px 10px; font-size: 13px; }
+.hold-check {
+  display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: 13.5px;
+  border: 1px dashed var(--line); border-radius: var(--r); padding: 10px 12px; margin: 6px 0 10px;
+}
+.hold-check input { margin-top: 3px; }
+
 /* ── คัดลอกผลตรวจจากรอบอื่น ─────────────────────────────────────────────── */
 .copy-sheet { max-width: 900px; }
 .copy-sources { display: flex; flex-direction: column; gap: 6px; }

@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.9.9';
+  const APP_VERSION = 'v2.10.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -21,6 +21,8 @@ const App = (() => {
   };
   // ── ชุดไอคอน flat modern (วาดด้วย SVG ในไฟล์ ไม่พึ่ง CDN) ───────────────────
   const ICONS = {
+    lock: '<rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
+    unlock: '<rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 7.7-1.5"/>',
     home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-6h5v6"/>',
     table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 15h18M9 9.5V20"/>',
     scan: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M4 12h16"/>',
@@ -434,14 +436,16 @@ const App = (() => {
           else { addLogLocal(sentLogFrom(it)); needRefresh = true; }
           sent++;
         } catch (e) {
-          it.lastError = e.message;
+          // ส่งไม่ผ่านเพราะรอบถูกพักไว้ — บอกเหตุผลจริง ไม่ใช่ "ไม่มีสิทธิ์" ลอยๆ
+          it.lastError = isHeldId(it.sessionId)
+            ? 'รอบนี้พักไว้ (Hold) — ส่งได้เมื่อผู้ดูแลเปิดรอบ' : e.message;
           it.tries = (it.tries || 0) + 1;
           try { await qPut(it); } catch (e2) {}
           // เน็ตหลุด = หยุดทั้งรอบไว้ส่งใหม่ทีหลัง · error ถาวร (เช่นยังไม่ได้รัน SQL,
           // สิทธิ์ไม่พอ, ข้อมูลผิดรูป) = ข้ามตัวนี้ไปส่งตัวอื่นต่อ ไม่ให้ค้างทั้งคิว
           if (isNetworkError(e.message)) break;
           stuck++;
-          if (!stuckMsg) stuckMsg = e.message;
+          if (!stuckMsg) stuckMsg = it.lastError;      // ใช้ข้อความที่แปลแล้ว (เช่น รอบถูกพักไว้)
         }
       }
     } finally {
@@ -890,6 +894,7 @@ const App = (() => {
     el('newRoundBtn').classList.toggle('hidden', !state.canWrite);
     el('appendBtn').classList.toggle('hidden', !state.canWrite);
     el('copyBtn').classList.toggle('hidden', !state.canWrite);
+    el('roundHoldRow').classList.toggle('hidden', p.role !== 'admin');
     document.querySelector('.scan-fab').classList.toggle('hidden', !state.canWrite);
   }
 
@@ -940,6 +945,8 @@ const App = (() => {
           state.logs = [];
           go('home');
           toast('รอบตรวจนี้ถูกลบไปแล้ว', 'warn');
+        } else if (isHeld(fresh) && !isAdminUser()) {
+          leaveHeldRound();
         } else {
           state.activeSession = fresh;
           const data = await Promise.all([
@@ -1082,6 +1089,49 @@ const App = (() => {
       pct: total ? Math.round(done * 100 / total) : 0
     };
   }
+  // ── พักรอบ (Hold) ──────────────────────────────────────────────────────────
+  // ผู้ดูแลพักรอบไว้ระหว่างเตรียมข้อมูล (คัดลอกผล / เพิ่มรายการ / ตรวจเทียบ) ผู้ตรวจเปิดรอบไม่ได้
+  // จนกว่าผู้ดูแลจะเปิดให้ใช้งาน — asset-hold.sql กันที่ฐานข้อมูลอีกชั้น
+  const isHeld = (s) => Boolean(s && s.status === 'Hold');
+  const isAdminUser = () => Boolean(state.profile && state.profile.role === 'admin');
+  const isHeldId = (id) => isHeld(state.sessions.find((x) => x.sessionId === id));
+  async function setRoundHold(id, hold) {
+    if (!isAdminUser()) return toast('เฉพาะผู้ดูแลระบบเท่านั้นที่พักหรือเปิดรอบได้', 'warn');
+    const s = state.sessions.find((x) => x.sessionId === id);
+    if (!s) return toast('ไม่พบรอบตรวจ', 'error');
+    if (!navigator.onLine) return toast('ต้องต่ออินเทอร์เน็ตก่อน', 'warn');
+    const name = s.site + (s.roundName ? ' · ' + s.roundName : '');
+    const msg = hold
+      ? 'พักรอบ "' + name + '" ไว้ (Hold)?\n\n' +
+        '• ผู้ตรวจจะเปิดรอบนี้ไม่ได้ และบันทึกผลเข้ารอบนี้ไม่ได้\n' +
+        '• คนที่เปิดรอบค้างไว้จะถูกพาออกเมื่อหน้าจอรีเฟรช (ไม่เกิน 2 นาที)\n' +
+        '• ผู้ดูแลยังเข้าไปเตรียมข้อมูลได้ตามปกติ'
+      : 'เปิดรอบ "' + name + '" ให้ผู้ตรวจใช้งาน?';
+    if (!window.confirm(msg)) return;
+    try {
+      busy(hold ? 'กำลังพักรอบ...' : 'กำลังเปิดรอบ...');
+      await AssetStore.updateSession(id, { status: hold ? 'Hold' : 'Active' });
+      await refreshAll(true);
+      toast(hold ? 'พักรอบไว้แล้ว — ผู้ตรวจเปิดรอบนี้ไม่ได้จนกว่าจะกดเปิดใช้งาน' : 'เปิดรอบให้ผู้ตรวจใช้งานแล้ว',
+        'success', null, 6000);
+    } catch (e) {
+      toast((hold ? 'พักรอบ' : 'เปิดรอบ') + 'ไม่สำเร็จ: ' + shortErr(e.message), 'error', null, 7000);
+    } finally {
+      busyHide();
+    }
+  }
+  /** ผู้ดูแลพักรอบที่ผู้ตรวจเปิดค้างอยู่ — พาออกจากรอบ ปิดหน้าต่างที่เปิดค้าง ไม่ให้บันทึกต่อ */
+  function leaveHeldRound() {
+    if (!el('scannerModal').classList.contains('hidden')) closeScanner();
+    document.querySelectorAll('.modal').forEach((m) => { m.classList.add('hidden'); });
+    state.activeSession = null;
+    state.master = [];
+    state.logs = [];
+    state.counts = [];
+    go('home');
+    toast('ผู้ดูแลพักรอบนี้ไว้ (Hold) — ออกจากรอบให้แล้ว · รายการที่ยังไม่ได้ส่งจะส่งได้เมื่อเปิดรอบ',
+      'warn', null, 9000);
+  }
   function setHomeSearch(v) { state.home.q = v.trim(); renderSessions(); }
   function setHomeStatus(v) { state.home.status = v; renderSessions(); }
   function setHomeSort(v) { state.home.sort = v; renderSessions(); }
@@ -1098,6 +1148,8 @@ const App = (() => {
     }
     if (h.status) {
       list = list.filter((s) => {
+        if (h.status === 'hold') return isHeld(s);
+        if (isHeld(s)) return false;                // รอบที่พักไว้ไม่นับเป็นกำลังตรวจ/เสร็จสิ้น
         const st = sessionStats(s);
         return h.status === 'done' ? st.pct >= 100 : st.pct < 100;
       });
@@ -1120,13 +1172,15 @@ const App = (() => {
         ? thaiD(s.countDateFrom) + (s.countDateTo && s.countDateTo !== s.countDateFrom
           ? ' – ' + thaiD(s.countDateTo) : '')
         : thaiD(s.createdAt);
-      return '<article class="session-card" data-id="' + esc(s.sessionId) + '">' +
+      const held = isHeld(s);
+      const locked = held && !isAdminUser();
+      return '<article class="session-card' + (held ? ' held' : '') + '" data-id="' + esc(s.sessionId) + '">' +
         '<div class="sc-head">' +
           '<div><h3>' + esc(s.site || '-') + '</h3>' +
           '<p class="sc-sub">' + esc(s.roundName || 'รอบตรวจ') +
           (s.costCenter ? ' · ' + esc(s.costCenter) : '') + '</p></div>' +
-          '<span class="pill ' + (done ? 'pill-ok' : 'pill-warn') + '">' +
-          (done ? 'เสร็จสิ้น' : 'กำลังตรวจ') + '</span>' +
+          '<span class="pill ' + (held ? 'pill-hold' : (done ? 'pill-ok' : 'pill-warn')) + '">' +
+          (held ? icon('lock') + ' พักไว้ (Hold)' : (done ? 'เสร็จสิ้น' : 'กำลังตรวจ')) + '</span>' +
         '</div>' +
         '<p class="sc-meta">' + icon('calendar') + ' ' + esc(dates) + ' <span class="dot-sep">·</span> ' + icon('box') + ' ' + st.total + ' รายการ' +
           ' (Fixed ' + (s.fixedCount || 0) + ' · เช่า ' + (s.rentalCount || 0) + ')' +
@@ -1140,10 +1194,17 @@ const App = (() => {
           '<span class="stat-chip st-moved">ย้ายออก ' + st.moved + '</span>' +
           '<span class="stat-chip st-pending">ค้าง ' + st.pending + '</span>' +
         '</div>' +
+        (held ? '<p class="hold-note">' + icon('lock') + (locked
+          ? ' รอบนี้พักไว้ — รอผู้ดูแลเปิดให้ใช้งานก่อน'
+          : ' พักไว้ — ผู้ตรวจยังเปิดรอบนี้ไม่ได้ · ผู้ดูแลเข้าไปเตรียมข้อมูลได้ตามปกติ') + '</p>' : '') +
         '<div class="sc-actions">' +
-          '<button class="primary-button" type="button" data-act="open">เปิดตรวจนับ</button>' +
-          '<button class="outline-button" type="button" data-act="dash">Dashboard</button>' +
-          (state.canWrite ? '<button class="danger-ghost" type="button" data-act="del" title="ลบรอบนี้">' + icon('trash') + '</button>' : '') +
+          '<button class="primary-button" type="button" data-act="open"' + (locked ? ' disabled' : '') + '>' +
+            (locked ? 'รอเปิดรอบ' : 'เปิดตรวจนับ') + '</button>' +
+          '<button class="outline-button" type="button" data-act="dash"' + (locked ? ' disabled' : '') + '>Dashboard</button>' +
+          (isAdminUser() ? '<button class="outline-button hold-btn" type="button" data-act="' + (held ? 'unhold' : 'hold') +
+            '" title="' + (held ? 'เปิดให้ผู้ตรวจใช้งาน' : 'พักรอบไว้ ผู้ตรวจจะเปิดรอบนี้ไม่ได้') + '">' +
+            icon(held ? 'unlock' : 'lock') + (held ? ' เปิดใช้งาน' : ' Hold') + '</button>' : '') +
+          (state.canWrite && !locked ? '<button class="danger-ghost" type="button" data-act="del" title="ลบรอบนี้">' + icon('trash') + '</button>' : '') +
         '</div>' +
       '</article>';
     }).join('');
@@ -1151,6 +1212,20 @@ const App = (() => {
   async function openSession(id, target) {
     const s = state.sessions.find((x) => x.sessionId === id);
     if (!s) return toast('ไม่พบรอบตรวจ', 'error');
+    if (!isAdminUser()) {
+      const heldMsg = 'รอบนี้พักไว้ (Hold) — รอผู้ดูแลเปิดให้ใช้งานก่อน';
+      if (isHeld(s)) return toast(heldMsg, 'warn', null, 6000);
+      // รายการรอบในเครื่องอาจเก่ากว่าเซิร์ฟเวอร์ — เช็คสถานะล่าสุดก่อนเปิด
+      if (navigator.onLine && AssetStore.loadSessionStatus) {
+        try {
+          if (await AssetStore.loadSessionStatus(id) === 'Hold') {
+            s.status = 'Hold';
+            renderSessions();
+            return toast(heldMsg, 'warn', null, 6000);
+          }
+        } catch (e) { /* เช็คไม่ได้ก็เปิดต่อ — ฐานข้อมูลยังกันการบันทึกเข้ารอบที่พักไว้ */ }
+      }
+    }
     state.activeSession = s;
     state.selection.clear();
     resetLimit();
@@ -1911,6 +1986,7 @@ const App = (() => {
     const from = el('roundFrom').value;
     if (!from) return toast('เลือกวันที่เริ่มตรวจก่อน', 'warn');
     const data = state.importData;
+    const holdNew = isAdminUser() && el('roundHold').checked;   // สร้างแบบพักไว้ เตรียมข้อมูลก่อนเปิดใช้
     const dup = state.sessions.find((s) => s.site === site && s.countDateFrom === from);
     if (dup && !window.confirm('มีรอบตรวจของโครงการ ' + site + ' วันที่เดียวกันอยู่แล้ว\nยืนยันสร้างรอบใหม่อีกรอบ?')) return;
     try {
@@ -1927,7 +2003,7 @@ const App = (() => {
         assetCount: data.rows.length,
         fixedCount: data.fixed,
         rentalCount: data.rental,
-        status: 'Active',
+        status: holdNew ? 'Hold' : 'Active',
         createdBy: inspectorName()
       });
       busy('กำลังนำเข้าทะเบียน ' + data.rows.length + ' รายการ...');
@@ -1943,8 +2019,10 @@ const App = (() => {
       el('roundForm').classList.add('hidden');
       el('uploadZoneText').textContent = 'แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน';
       ['roundName', 'roundNote', 'roundTo'].forEach((id) => { el(id).value = ''; });
+      el('roundHold').checked = false;
       await refreshAll(true);
-      toast('สร้างรอบตรวจแล้ว นำเข้า ' + data.rows.length + ' รายการ', 'success');
+      toast('สร้างรอบตรวจแล้ว นำเข้า ' + data.rows.length + ' รายการ' +
+        (holdNew ? ' · พักไว้ (Hold) ผู้ตรวจยังเปิดไม่ได้ จนกว่าจะกดเปิดใช้งาน' : ''), 'success', null, holdNew ? 7000 : undefined);
       openSession(session.sessionId);
     } catch (e) {
       toast('สร้างรอบไม่สำเร็จ: ' + e.message, 'error');
@@ -1968,7 +2046,11 @@ const App = (() => {
       (dates ? ' · ' + esc(dates) : '') + '</p></div>' +
       '<div class="rb-progress"><div class="progress-line"><span>ตรวจแล้ว ' + st.done + ' / ' + st.total +
       '</span><span>' + st.pct + '%</span></div>' +
-      '<div class="bar"><i class="' + (st.pct >= 100 ? 'ok' : '') + '" style="width:' + st.pct + '%"></i></div></div>';
+      '<div class="bar"><i class="' + (st.pct >= 100 ? 'ok' : '') + '" style="width:' + st.pct + '%"></i></div></div>' +
+      (isHeld(s) ? '<div class="rb-hold">' + icon('lock') + ' <span><b>รอบนี้พักไว้ (Hold)</b> — ' +
+        'ผู้ตรวจยังเปิดรอบนี้ไม่ได้ เตรียมข้อมูลให้เรียบร้อยแล้วค่อยเปิดใช้งาน</span>' +
+        (isAdminUser() ? '<button class="outline-button" type="button" onclick="App.setRoundHold(\'' +
+          esc(s.sessionId) + '\', false)">' + icon('unlock') + ' เปิดให้ใช้งาน</button>' : '') + '</div>' : '');
   }
   function mastersOfType() {
     return state.master.filter((a) => a.assetType === state.ui.type);
@@ -6171,6 +6253,7 @@ const App = (() => {
       const btn = ev.target.closest('button[data-act]');
       const act = btn ? btn.dataset.act : 'open';
       if (act === 'del') return deleteSession(id);
+      if (act === 'hold' || act === 'unhold') return setRoundHold(id, act === 'hold');
       openSession(id, act === 'dash' ? 'dash' : 'list');
     });
     el('assetTbody').addEventListener('click', (ev) => {
@@ -6290,7 +6373,7 @@ const App = (() => {
     setAuthMode, submitAuth, logout, togglePassword,
     showAccessReq, closeAccessReq, approveAccess, rejectAccess, deleteProfileAccount,
     go, refreshAll, flushQueueNow,
-    setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession,
+    setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession, setRoundHold,
     readMasterFile, confirmImport, cancelImport, openAppendImport, confirmAppend,
     openCopy, closeCopy, toggleCopySource, readCopyFile, analyzeCopy, setCopyMode, confirmCopy,
     setType, setView, setSearch, setCat, setStaff, setArea, setSort, setStatus, setSelectedArea,
