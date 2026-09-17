@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.9.7">
+  <link rel="stylesheet" href="styles.css?v=2.9.8">
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -205,6 +205,7 @@
             <button class="tool-button" type="button" onclick="App.openCountSheet()"><span data-icon="hash"></span> นับจำนวน</button>
             <button class="tool-button" type="button" onclick="App.openUnlisted('')"><span data-icon="plus"></span> นอกทะเบียน</button>
             <button id="appendBtn" class="tool-button hidden" type="button" onclick="App.openAppendImport()"><span data-icon="upload"></span> เพิ่มรายการจากไฟล์</button>
+            <button id="copyBtn" class="tool-button hidden" type="button" onclick="App.openCopy()"><span data-icon="history"></span> คัดลอกผลจากรอบอื่น</button>
             <button id="colBtn" class="tool-button" type="button" onclick="App.toggleColPicker(event)"><span data-icon="columns"></span> คอลัมน์</button>
             <button class="tool-button" type="button" onclick="App.go('activity')"><span data-icon="history"></span> ประวัติการบันทึก</button>
             <button class="tool-button" type="button" onclick="App.exportExcel()"><span data-icon="download"></span> Excel</button>
@@ -613,6 +614,34 @@
     </div>
   </div>
 
+  <!-- ── Modal: คัดลอกผลตรวจจากรอบอื่น ─────────────────────────────────────── -->
+  <div id="copyModal" class="modal hidden" onclick="if(event.target===this)App.closeCopy()">
+    <div class="sheet copy-sheet">
+      <div class="sheet-head">
+        <div><h3><span data-icon="history"></span> คัดลอกผลตรวจจากรอบอื่น</h3><p id="copySub"></p></div>
+        <button class="close-button" type="button" onclick="App.closeCopy()"><span data-icon="close"></span></button>
+      </div>
+      <div class="sheet-body">
+        <p class="hint">ดึงผลที่ตรวจไว้แล้วในรอบอื่นมาใส่รอบนี้ — คัดลอกเฉพาะรหัสที่อยู่ในทะเบียนรอบนี้
+          (รวมของนอกทะเบียน) พร้อมรูป พิกัด เวลา และผู้บันทึกเดิม · <b>รอบต้นทางไม่ถูกแก้</b> · กดซ้ำได้ ไม่เกิดรายการซ้ำ</p>
+        <p class="form-label">1. เลือกรอบต้นทาง (เลือกได้หลายรอบ)</p>
+        <div id="copySources" class="copy-sources"></div>
+        <p class="form-label">2. ไฟล์ที่ติ๊ก Yes ไว้ (ไม่บังคับ)</p>
+        <label class="upload-zone small">
+          <input id="copyFile" type="file" accept=".xls,.xlsx" hidden onchange="App.readCopyFile(event)">
+          <span data-icon="upload"></span> <span id="copyFileText"></span>
+        </label>
+        <button class="outline-button full-width" type="button" onclick="App.analyzeCopy()">
+          <span data-icon="search"></span> 3. ตรวจสอบก่อนคัดลอก</button>
+        <div id="copyPreview" class="copy-preview hidden"></div>
+        <div id="copyActions" class="import-actions hidden">
+          <button class="outline-button" type="button" onclick="App.closeCopy()">ยกเลิก</button>
+          <button class="primary-button" type="button" onclick="App.confirmCopy()">คัดลอกเข้ารอบนี้</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Modal: เลขท้ายตรงกับหลายหมวด ให้เลือกว่าอันไหน ───────────────────── -->
   <div id="pickModal" class="modal hidden" onclick="if(event.target===this)App.pickChoose(null)">
     <div class="sheet dup-sheet">
@@ -691,9 +720,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.9.7" defer></script>
-  <script src="config.js?v=2.9.7"></script>
-  <script src="src/assetStore.js?v=2.9.7"></script>
-  <script src="app.js?v=2.9.7"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.9.8" defer></script>
+  <script src="config.js?v=2.9.8"></script>
+  <script src="src/assetStore.js?v=2.9.8"></script>
+  <script src="app.js?v=2.9.8"></script>
 </body>
 </html>

@@ -745,6 +745,36 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 .gps-btn:active { transform: scale(.96); }
 .count-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .chip.mini { padding: 3px 10px; font-size: 12px; }
+/* ── คัดลอกผลตรวจจากรอบอื่น ─────────────────────────────────────────────── */
+.copy-sheet { max-width: 900px; }
+.copy-sources { display: flex; flex-direction: column; gap: 6px; }
+.copy-src {
+  display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; background: var(--surface);
+}
+.copy-src.on { border-color: var(--accent); background: var(--accent-tint); }
+.copy-src input { margin-top: 3px; }
+.copy-src small { display: block; color: var(--faint); font-size: 12.5px; margin-top: 2px; }
+.upload-zone.small { padding: 12px; font-size: 13.5px; margin-bottom: 10px; }
+.copy-preview { margin-top: 12px; }
+.copy-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+@media (max-width: 560px) { .copy-stats { grid-template-columns: repeat(2, 1fr); } }
+.copy-notes { margin: 10px 0; padding-left: 18px; font-size: 13.5px; line-height: 1.6; }
+.copy-h { margin: 14px 0 4px; font-size: 14.5px; }
+.copy-mode {
+  display: block; padding: 8px 10px; margin-bottom: 6px; font-size: 13.5px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--r);
+}
+.copy-mode small { display: block; color: var(--faint); margin-left: 22px; }
+.cmp-wrap { max-height: 340px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); margin-top: 8px; }
+.cmp-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cmp-table th { position: sticky; top: 0; background: var(--surface-2); text-align: left; padding: 6px 8px; font-weight: 600; }
+.cmp-table td { padding: 5px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+.cmp-table tr.diff td { background: rgba(176, 64, 47, .08); }
+.cmp-table tr.drop td:not([rowspan]) { color: var(--faint); text-decoration: line-through; }
+.bad-text { color: var(--no); }
+.copy-list summary { cursor: pointer; color: var(--accent); font-size: 12.5px; margin-top: 2px; }
+.copy-list div { font-size: 12px; margin-top: 4px; word-break: break-word; color: var(--muted); }
 /* ปุ่มล้างคำค้นหา — ทำเอง เพราะ Safari บนมือถือไม่แสดงปุ่มล้างของ input[type=search] */
 .search-clear {
   flex: none; border: 0; background: transparent; color: var(--faint);

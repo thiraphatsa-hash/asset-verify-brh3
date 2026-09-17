@@ -238,6 +238,42 @@ const AssetStore = (function () {
     return { inserted: out.length, rows: out };
   }
 
+  /**
+   * เขียนหลายแถวแบบข้ามแถวที่ client_id ซ้ำ (กดคัดลอกซ้ำได้โดยไม่เกิดแถวซ้ำ)
+   * stripFor(msg) คืนชื่อคอลัมน์ที่ต้องตัดทิ้งแล้วลองใหม่ เมื่อฐานข้อมูลยังไม่ได้รัน SQL ที่เพิ่มคอลัมน์นั้น
+   */
+  async function insertIgnoringDuplicates(table, rows, stripFor) {
+    let inserted = 0;
+    const chunk = 300;
+    for (let i = 0; i < rows.length; i += chunk) {
+      let part = rows.slice(i, i + chunk);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { data, error } = await getClient().from(table)
+          .upsert(part, { onConflict: 'client_id', ignoreDuplicates: true })
+          .select('client_id');
+        if (!error) { inserted += (data || []).length; break; }
+        const strip = stripFor(error.message || '');
+        if (!strip || attempt === 2) throw new Error(error.message);
+        part = part.map((r) => {
+          const x = Object.assign({}, r);
+          strip.forEach((k) => { delete x[k]; });
+          return x;
+        });
+      }
+    }
+    return { inserted: inserted };
+  }
+  /** คัดลอกผลตรวจจากรอบอื่น — เก็บ created_by / รูป / พิกัด / เวลาเดิมไว้ทั้งหมด */
+  async function copyLogs(rows) {
+    return insertIgnoringDuplicates('asset_verify_log', (rows || []).map(objToRow),
+      (msg) => (/piece_no/.test(msg) ? ['piece_no'] : null));
+  }
+  async function copyCounts(rows) {
+    return insertIgnoringDuplicates('asset_count_log', (rows || []).map(objToRow),
+      (msg) => (NO_COUNT_MEDIA.test(msg) && /does not exist|schema cache|column/i.test(msg)
+        ? ['gps_lat', 'gps_lng', 'gps_accuracy', 'photo_paths'] : null));
+  }
+
   /** แก้พื้นที่จัดเก็บของทรัพย์สินในทะเบียนรอบนั้น (ผู้ตรวจเติมเองหน้างานได้) */
   async function setAssetLocation(sessionId, inventoryNumbers, location, locationCode) {
     const list = (inventoryNumbers || []).filter(Boolean);
@@ -459,7 +495,7 @@ const AssetStore = (function () {
     signIn, signOut, signUp, getSession, currentUser, getMyProfile,
     sendPasswordReset, listProfiles, updateProfile, deleteUserAccount, confirmUserEmail,
     listSessions, createSession, updateSession, deleteSession,
-    loadMaster, importAssets, addAssets, setAssetLocation,
+    loadMaster, importAssets, addAssets, setAssetLocation, copyLogs, copyCounts,
     loadLogs, loadLogsSummary, saveVerify, deleteLog, deleteLogsFor, subscribeLogs, unsubscribe,
     loadCounts, saveCount, deleteCount,
     uploadPhoto, photoUrls, downloadPhoto

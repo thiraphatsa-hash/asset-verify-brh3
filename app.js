@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.9.7';
+  const APP_VERSION = 'v2.9.8';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -889,6 +889,7 @@ const App = (() => {
     el('nav-manage').classList.toggle('hidden', p.role !== 'admin');
     el('newRoundBtn').classList.toggle('hidden', !state.canWrite);
     el('appendBtn').classList.toggle('hidden', !state.canWrite);
+    el('copyBtn').classList.toggle('hidden', !state.canWrite);
     document.querySelector('.scan-fab').classList.toggle('hidden', !state.canWrite);
   }
 
@@ -1525,6 +1526,345 @@ const App = (() => {
       openSession(sid);
     } catch (e) {
       toast('เพิ่มรายการไม่สำเร็จ: ' + e.message, 'error', null, 7000);
+    } finally {
+      busyHide();
+    }
+  }
+
+  // ── คัดลอกผลตรวจจากรอบอื่น ──────────────────────────────────────────────────
+  // ใช้ตอนตั้งรอบใหม่จากทะเบียนที่แก้แล้ว แต่ผลตรวจหน้างานยังอยู่ในรอบเก่า
+  // (เช่น KL-5 TEMP ที่ทะเบียนแรกเป็นของทั้ง Plant) — คัดลอกแถวผลตรวจตรงๆ ทั้งรูป พิกัด
+  // เวลา และผู้บันทึกเดิม รอบต้นทางไม่ถูกแตะ และกดซ้ำได้โดยไม่เกิดแถวซ้ำ
+  const COPY_FILE_HINT = 'เลือกไฟล์ — รหัสที่ติ๊ก Yes แต่ไม่มีผลตรวจในระบบ จะถูกบันทึกเป็น "พบ"';
+  function copyRoundName(id) {
+    const x = state.sessions.find((v) => v.sessionId === id);
+    if (!x) return '(รอบที่ถูกลบแล้ว)';
+    return x.site + (x.roundName ? ' · ' + x.roundName : '') +
+      (x.countDateFrom ? ' · ' + thaiD(x.countDateFrom) : '');
+  }
+  function openCopy() {
+    const s = state.activeSession;
+    if (!s) return toast('เลือกรอบตรวจก่อน', 'warn');
+    if (!state.canWrite) return toast('เฉพาะผู้ตรวจหรือผู้ดูแลเท่านั้นที่คัดลอกผลตรวจได้', 'warn');
+    if (!navigator.onLine) return toast('ต้องต่ออินเทอร์เน็ตก่อน — ต้องโหลดผลตรวจของรอบอื่นจากเซิร์ฟเวอร์', 'warn');
+    state.copy = { sources: [], yesCodes: null, yesFile: '', plan: null, mode: 'latest' };
+    el('copySub').textContent = 'ปลายทาง: ' + s.site + (s.roundName ? ' · ' + s.roundName : '') +
+      ' · ทะเบียน ' + state.master.length + ' รายการ';
+    el('copyFileText').textContent = COPY_FILE_HINT;
+    renderCopySources();
+    invalidateCopyPlan();
+    el('copyModal').classList.remove('hidden');
+  }
+  function closeCopy() {
+    el('copyModal').classList.add('hidden');
+    state.copy = null;
+  }
+  function invalidateCopyPlan() {
+    if (state.copy) state.copy.plan = null;
+    el('copyPreview').classList.add('hidden');
+    el('copyActions').classList.add('hidden');
+  }
+  function renderCopySources() {
+    const s = state.activeSession;
+    const logCount = {};
+    (state.logSummary || []).forEach((l) => { logCount[l.sessionId] = (logCount[l.sessionId] || 0) + 1; });
+    const list = state.sessions.filter((x) => x.sessionId !== s.sessionId)
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    el('copySources').innerHTML = list.length ? list.map((x) => {
+      const on = state.copy.sources.indexOf(x.sessionId) >= 0;
+      return '<label class="copy-src' + (on ? ' on' : '') + '">' +
+        '<input type="checkbox"' + (on ? ' checked' : '') +
+        ' onchange="App.toggleCopySource(\'' + esc(x.sessionId) + '\', this.checked)">' +
+        '<span><b>' + esc(copyRoundName(x.sessionId)) + '</b>' +
+        '<small>ทะเบียน ' + (x.assetCount || 0) + ' รายการ · ผลตรวจ ' + (logCount[x.sessionId] || 0) + ' ครั้ง' +
+        (x.inspectorName ? ' · ' + esc(x.inspectorName) : '') + '</small></span></label>';
+    }).join('') : '<p class="hint">ยังไม่มีรอบอื่นในระบบ</p>';
+  }
+  function toggleCopySource(id, on) {
+    if (!state.copy) return;
+    state.copy.sources = state.copy.sources.filter((x) => x !== id);
+    if (on) state.copy.sources.push(id);
+    renderCopySources();
+    invalidateCopyPlan();
+  }
+  /** รหัสที่ติ๊กช่อง Yes ไว้ในชีทฟอร์มทะเบียน (หัว Yes อาจอยู่ลึกลงไป 1–3 แถวใต้หัว Inventory Number) */
+  function readYesTicks(ws) {
+    const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '', blankrows: true });
+    let hr = -1;
+    let invCol = -1;
+    for (let r = 0; r < Math.min(rows.length, 20); r++) {
+      const c = (rows[r] || []).findIndex((v) => normHead(v) === 'INVENTORY NUMBER');
+      if (c >= 0) { hr = r; invCol = c; break; }
+    }
+    if (hr < 0) return null;
+    let yesCol = -1;
+    let dataStart = hr + 1;
+    for (let r = hr; r < Math.min(rows.length, hr + 4) && yesCol < 0; r++) {
+      const c = (rows[r] || []).findIndex((v) => normHead(v) === 'YES');
+      if (c >= 0) { yesCol = c; dataStart = r + 1; }
+    }
+    if (yesCol < 0) return null;
+    const out = new Set();
+    for (let r = dataStart; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const code = normalizeCode(row[invCol]);
+      if (code && String(row[yesCol] == null ? '' : row[yesCol]).trim()) out.add(code);
+    }
+    return out;
+  }
+  async function readCopyFile(event) {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (!file || !state.copy) return;
+    try {
+      busy('กำลังอ่านไฟล์...');
+      await ensureLibrary('xlsx');
+      const wb = window.XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const yes = new Set();
+      const perSheet = [];
+      wb.SheetNames.forEach((name) => {
+        const got = readYesTicks(wb.Sheets[name]);
+        if (got && got.size) {
+          perSheet.push(name + ' ' + got.size);
+          got.forEach((c) => yes.add(c));
+        }
+      });
+      if (!yes.size) throw new Error('ไม่พบช่อง Yes ที่ติ๊กไว้ในไฟล์นี้');
+      state.copy.yesCodes = yes;
+      state.copy.yesFile = file.name;
+      el('copyFileText').innerHTML = icon('note') + ' ' + esc(file.name) + ' — ติ๊ก Yes ' + yes.size +
+        ' รหัส <small>(' + esc(perSheet.join(' · ')) + ')</small>';
+      invalidateCopyPlan();
+    } catch (e) {
+      state.copy.yesCodes = null;
+      state.copy.yesFile = '';
+      el('copyFileText').textContent = COPY_FILE_HINT;
+      toast(e.message, 'error');
+    } finally {
+      busyHide();
+    }
+  }
+  async function analyzeCopy() {
+    const c = state.copy;
+    if (!c) return;
+    if (!c.sources.length && !c.yesCodes) {
+      return toast('เลือกรอบต้นทาง หรือเลือกไฟล์ที่ติ๊ก Yes อย่างน้อย 1 อย่าง', 'warn');
+    }
+    try {
+      let srcLogs = [];
+      let srcCounts = [];
+      for (let i = 0; i < c.sources.length; i++) {
+        const id = c.sources[i];
+        busy('กำลังโหลดผลตรวจรอบต้นทาง ' + (i + 1) + ' / ' + c.sources.length + '...');
+        const got = await Promise.all([AssetStore.loadLogs(id), AssetStore.loadCounts(id)]);
+        got[0].forEach((l) => { l.__src = id; });
+        got[1].forEach((x) => { x.__src = id; });
+        srcLogs = srcLogs.concat(got[0]);
+        srcCounts = srcCounts.concat(got[1]);
+      }
+      const inReg = new Set(state.master.map((a) => a.inventoryNumber));
+      const here = allLogs();
+      const keep = [];
+      const skipped = [];
+      srcLogs.forEach((l) => {
+        // รายการนอกทะเบียนคือของที่เจอหน้างานนี้จริง จึงคัดลอกตามมาด้วย
+        if (inReg.has(l.inventoryNumber) || l.unregistered) keep.push(l); else skipped.push(l);
+      });
+      // จัดกลุ่มตาม "ชิ้น" (รหัส + เลขชิ้น) เพื่อเทียบว่าชิ้นเดียวกันมีผลในหลายรอบหรือไม่
+      const groups = new Map();
+      keep.forEach((l) => {
+        const k = l.inventoryNumber + '#' + (Number(l.pieceNo) > 0 ? Number(l.pieceNo) : 1);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(l);
+      });
+      const crossDup = [];
+      const sameDup = [];
+      groups.forEach((arr) => {
+        if (arr.length < 2) return;
+        arr.sort((a, b) => String(a.verifiedAt).localeCompare(String(b.verifiedAt)));
+        (new Set(arr.map((l) => l.__src)).size > 1 ? crossDup : sameDup).push(arr);
+      });
+      crossDup.sort((a, b) => a[0].inventoryNumber.localeCompare(b[0].inventoryNumber));
+      c.plan = {
+        srcLogs: srcLogs, srcCounts: srcCounts, keep: keep, skipped: skipped, groups: groups,
+        crossDup: crossDup, sameDup: sameDup, inReg: inReg,
+        hereCodes: new Set(here.map((l) => l.inventoryNumber)),
+        doneLogs: new Set(here.map((l) => l.clientId).filter(Boolean)),
+        doneCounts: new Set(allCounts().map((x) => x.clientId).filter(Boolean))
+      };
+      renderCopyPlan();
+    } catch (e) {
+      toast('โหลดผลตรวจไม่สำเร็จ: ' + e.message, 'error', null, 7000);
+    } finally {
+      busyHide();
+    }
+  }
+  /** แถวที่จะเขียนจริงตามโหมดที่เลือก (ล่าสุดครั้งเดียว / ทุกครั้ง) */
+  function buildCopy(plan, mode) {
+    const s = state.activeSession;
+    const c = state.copy;
+    const chosen = [];
+    if (mode === 'all') plan.keep.forEach((l) => { chosen.push(l); });
+    else plan.groups.forEach((arr) => { chosen.push(arr.reduce((a, l) => (isNewer(l, a) ? l : a))); });
+    const logRows = [];
+    let alreadyLogs = 0;
+    let unregCount = 0;
+    chosen.forEach((l) => {
+      const clientId = 'copy-' + s.sessionId + '-' + l.logId;
+      if (plan.doneLogs.has(clientId)) { alreadyLogs++; return; }
+      const r = Object.assign({}, l);
+      ['logId', 'createdAt', '__src', 'pieces', 'records', 'clash', 'pending'].forEach((k) => { delete r[k]; });
+      r.clientId = clientId;
+      r.sessionId = s.sessionId;
+      r.site = s.site;
+      if (r.unregistered) unregCount++;
+      logRows.push(r);
+    });
+    const covered = new Set(plan.hereCodes);
+    chosen.forEach((l) => { covered.add(l.inventoryNumber); });
+    const byInv = new Map();
+    state.master.forEach((a) => { byInv.set(a.inventoryNumber, a); });
+    const now = new Date().toISOString();
+    const yesRows = !c.yesCodes ? [] : Array.from(c.yesCodes)
+      .filter((code) => plan.inReg.has(code) && !covered.has(code))
+      .sort()
+      .map((code) => {
+        const a = byInv.get(code);
+        return {
+          clientId: 'yes-' + s.sessionId + '-' + code, sessionId: s.sessionId, site: s.site,
+          inventoryNumber: code, assetType: a ? a.assetType : 'FIXED',
+          result: 'FOUND', condition: 'NORMAL', method: 'MANUAL', inspector: inspectorName(),
+          pieceNo: 1, locationText: a && a.location ? a.location : '',
+          note: 'นำเข้าจากไฟล์ที่ติ๊ก Yes (' + c.yesFile + ') — ไม่มีประวัติตรวจในระบบ',
+          photoPaths: [], unregistered: false, verifiedAt: now
+        };
+      })
+      .filter((r) => !plan.doneLogs.has(r.clientId));
+    const countRows = [];
+    let alreadyCounts = 0;
+    plan.srcCounts.forEach((x) => {
+      const clientId = 'copy-' + s.sessionId + '-' + x.countId;
+      if (plan.doneCounts.has(clientId)) { alreadyCounts++; return; }
+      const r = Object.assign({}, x);
+      ['countId', 'createdAt', '__src', 'pending', 'photoCount'].forEach((k) => { delete r[k]; });
+      r.clientId = clientId;
+      r.sessionId = s.sessionId;
+      r.site = s.site;
+      countRows.push(r);
+    });
+    const checked = new Set();
+    covered.forEach((code) => { if (plan.inReg.has(code)) checked.add(code); });
+    yesRows.forEach((r) => { checked.add(r.inventoryNumber); });
+    return {
+      logRows: logRows, yesRows: yesRows, countRows: countRows, alreadyLogs: alreadyLogs,
+      alreadyCounts: alreadyCounts, unregCount: unregCount, checkedAfter: checked.size
+    };
+  }
+  function setCopyMode(mode) {
+    if (!state.copy || !state.copy.plan) return;
+    state.copy.mode = mode === 'all' ? 'all' : 'latest';
+    renderCopyPlan();
+  }
+  function renderCopyPlan() {
+    const c = state.copy;
+    const p = c && c.plan;
+    if (!p) return;
+    const b = buildCopy(p, c.mode);
+    const reg = state.master.length;
+    // รายชื่อเต็มพับไว้ — ต้องตรวจทานได้ทุกรหัสก่อนกดคัดลอก ไม่ใช่เห็นแค่ตัวอย่าง
+    const fullList = (arr) => '<details class="copy-list"><summary>ดูทั้งหมด ' + arr.length +
+      ' รหัส</summary><div class="mono">' + esc(arr.join(', ')) + '</div></details>';
+    const stat = (n, label, cls) => '<div class="cmp-cell ' + (cls || '') + '"><b>' + n + '</b><small>' +
+      label + '</small></div>';
+    const skippedCodes = Array.from(new Set(p.skipped.map((l) => l.inventoryNumber))).sort();
+    const copiedCodes = new Set(b.logRows.map((r) => r.inventoryNumber)).size;
+    let html = '<div class="copy-stats">' +
+        stat(p.srcLogs.length, 'ผลตรวจในรอบต้นทาง') +
+        stat(b.logRows.length, 'จะคัดลอก', 'ok') +
+        stat(b.yesRows.length, 'ติ๊ก Yes → บันทึกพบ', 'ok') +
+        stat(reg - b.checkedAfter, 'ยังไม่ตรวจหลังคัดลอก', 'bad') +
+      '</div>' +
+      '<ul class="copy-notes">' +
+        '<li>หลังคัดลอก รอบนี้จะ<b>ตรวจแล้ว ' + b.checkedAfter + ' / ' + reg + '</b> รายการ</li>' +
+        '<li>คัดลอกผลตรวจ <b>' + b.logRows.length + '</b> ครั้ง (' + copiedCodes + ' รหัส) ' +
+          'พร้อมรูป พิกัด เวลา และผู้บันทึกเดิม' +
+          (b.unregCount ? ' · ในนี้เป็นของนอกทะเบียน ' + b.unregCount + ' ครั้ง' : '') + '</li>' +
+        (p.skipped.length ? '<li>ข้าม <b>' + p.skipped.length + '</b> ครั้ง (' + skippedCodes.length +
+          ' รหัส) — ไม่อยู่ในทะเบียนรอบนี้ (ถูกตัดออกจากทะเบียนแล้ว)' + fullList(skippedCodes) + '</li>' : '') +
+        (b.alreadyLogs ? '<li>' + b.alreadyLogs + ' ครั้งเคยคัดลอกเข้ารอบนี้แล้ว — ข้ามให้</li>' : '') +
+        (c.yesCodes ? '<li>ไฟล์ ' + esc(c.yesFile) + ' ติ๊ก Yes ' + c.yesCodes.size + ' รหัส — ในนี้ ' +
+          '<b>' + b.yesRows.length + '</b> รหัสไม่มีผลตรวจในระบบ จะบันทึกเป็น "พบ" (MANUAL พร้อมหมายเหตุ)' +
+          (b.yesRows.length ? fullList(b.yesRows.map((r) => r.inventoryNumber)) : '') + '</li>' : '') +
+        (p.srcCounts.length ? '<li>ยอดนับตามหมวด <b>' + b.countRows.length + '</b> ครั้ง' +
+          (b.alreadyCounts ? ' (เคยคัดลอกแล้ว ' + b.alreadyCounts + ' ครั้ง)' : '') + '</li>' : '') +
+      '</ul>';
+    html += '<h4 class="copy-h">ชิ้นที่มีผลตรวจมากกว่า 1 รอบ: ' + p.crossDup.length + ' รหัส</h4>';
+    if (p.crossDup.length) {
+      const differ = p.crossDup.filter((arr) => new Set(arr.map((l) => l.result)).size > 1).length;
+      html += '<p class="hint">ชิ้นเดียวกันถูกบันทึกไว้ในหลายรอบ' +
+        (differ ? ' — <b class="bad-text">ผลไม่ตรงกัน ' + differ + ' รหัส</b> (แถวสีแดง)' : ' ผลตรงกันทุกรหัส') +
+        ' · แถวขีดฆ่า = ไม่ถูกคัดลอก</p>' +
+        '<label class="copy-mode"><input type="radio" name="copyMode"' + (c.mode === 'latest' ? ' checked' : '') +
+          ' onchange="App.setCopyMode(\'latest\')"> <b>เก็บเฉพาะครั้งล่าสุด</b>' +
+          '<small>ไม่นับซ้ำ ผลครั้งล่าสุดเป็นตัวตัดสิน (แนะนำ)</small></label>' +
+        '<label class="copy-mode"><input type="radio" name="copyMode"' + (c.mode === 'all' ? ' checked' : '') +
+          ' onchange="App.setCopyMode(\'all\')"> <b>เก็บทุกครั้ง</b>' +
+          '<small>ประวัติครบทุกรอบ แต่ถ้าคนละคนบันทึกจะขึ้นป้าย "ซ้ำ" ในรายการ</small></label>' +
+        '<div class="cmp-wrap"><table class="cmp-table"><thead><tr><th>RT code</th><th>รอบ</th>' +
+          '<th>ผล</th><th>ผู้บันทึก</th><th>เวลา</th><th>ตำแหน่ง</th></tr></thead><tbody>' +
+        p.crossDup.map((arr) => {
+          const differs = new Set(arr.map((l) => l.result)).size > 1;
+          const latest = arr.reduce((a, l) => (isNewer(l, a) ? l : a));
+          return arr.map((l, i) => '<tr class="' + (differs ? 'diff' : '') +
+              (c.mode === 'latest' && l !== latest ? ' drop' : '') + '">' +
+            (i === 0 ? '<td rowspan="' + arr.length + '" class="mono">' + esc(l.inventoryNumber) +
+              (Number(l.pieceNo) > 1 ? ' ·' + Number(l.pieceNo) : '') + '</td>' : '') +
+            '<td>' + esc(copyRoundName(l.__src)) + '</td><td>' + esc(statusLabel(l)) + '</td>' +
+            '<td>' + esc(l.inspector || '') + '</td><td>' + esc(thaiDT(l.verifiedAt)) + '</td>' +
+            '<td>' + esc(l.locationText || '') + '</td></tr>').join('');
+        }).join('') +
+        '</tbody></table></div>';
+    }
+    if (p.sameDup.length) {
+      html += '<p class="hint">อีก ' + p.sameDup.length + ' รหัสถูกบันทึกหลายครั้งภายในรอบเดียวกัน (แก้ผลเดิม) — ' +
+        (c.mode === 'latest' ? 'คัดลอกเฉพาะผลล่าสุด' : 'คัดลอกทุกครั้ง') + '</p>';
+    }
+    el('copyPreview').innerHTML = html;
+    el('copyPreview').classList.remove('hidden');
+    el('copyActions').classList.toggle('hidden', !(b.logRows.length + b.yesRows.length + b.countRows.length));
+  }
+  async function confirmCopy() {
+    const c = state.copy;
+    const s = state.activeSession;
+    if (!c || !c.plan || !s) return;
+    const b = buildCopy(c.plan, c.mode);
+    const logs = b.logRows.concat(b.yesRows);
+    if (!logs.length && !b.countRows.length) return toast('ไม่มีอะไรต้องคัดลอกแล้ว', 'warn');
+    if (!window.confirm('คัดลอกเข้ารอบ ' + s.site + (s.roundName ? ' · ' + s.roundName : '') + '\n' +
+      '• ผลตรวจ ' + b.logRows.length + ' ครั้ง\n• ติ๊ก Yes → พบ ' + b.yesRows.length + ' รหัส\n' +
+      '• ยอดนับ ' + b.countRows.length + ' ครั้ง\n\nรอบต้นทางไม่ถูกแก้ ยืนยัน?')) return;
+    try {
+      let r1 = { inserted: 0 };
+      if (logs.length) {
+        busy('กำลังคัดลอกผลตรวจ ' + logs.length + ' ครั้ง...');
+        r1 = await AssetStore.copyLogs(logs);
+      }
+      let r2 = { inserted: 0 };
+      let countErr = '';
+      if (b.countRows.length) {
+        busy('กำลังคัดลอกยอดนับ...');
+        try { r2 = await AssetStore.copyCounts(b.countRows); } catch (e) { countErr = e.message; }
+      }
+      closeCopy();
+      // สรุปความคืบหน้าบนแถบรอบ/หน้าแรกมาจากสรุปผลตรวจทุกรอบ ต้องโหลดใหม่ด้วย ไม่งั้นยังขึ้น 0%
+      await refreshAll(true);
+      await openSession(s.sessionId);                 // โหลดผลตรวจชุดใหม่ของรอบนี้ทั้งหมด
+      toast('คัดลอกแล้ว: ผลตรวจ ' + r1.inserted + ' ครั้ง' +
+        (r2.inserted ? ' · ยอดนับ ' + r2.inserted + ' ครั้ง' : '') +
+        (countErr ? ' · ยอดนับคัดลอกไม่ได้ (' + shortErr(countErr) + ')' : ''),
+        countErr ? 'warn' : 'success', null, 8000);
+    } catch (e) {
+      toast('คัดลอกไม่สำเร็จ: ' + shortErr(e.message), 'error', null, 8000);
     } finally {
       busyHide();
     }
@@ -5917,6 +6257,7 @@ const App = (() => {
     go, refreshAll, flushQueueNow,
     setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession,
     readMasterFile, confirmImport, cancelImport, openAppendImport, confirmAppend,
+    openCopy, closeCopy, toggleCopySource, readCopyFile, analyzeCopy, setCopyMode, confirmCopy,
     setType, setView, setSearch, setCat, setStaff, setArea, setSort, setStatus, setSelectedArea,
     openAreaPicker, closeAreaPicker, setAreaPickSearch, showMore, useLastArea,
     openQueuePanel, closeQueuePanel, retryQueue, dropQueueItem, dropAllQueue, setCountCustom,
