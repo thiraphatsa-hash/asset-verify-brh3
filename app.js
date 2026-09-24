@@ -969,8 +969,10 @@ const App = (() => {
    */
   async function syncRound(id, opts) {
     const force = Boolean(opts && opts.force);
+    // ถามลายนิ้วมือเสมอ (ไม่กี่ร้อยไบต์) แม้ตอนสั่งโหลดใหม่ทั้งรอบ — จะได้จำจุดอ่านล่าสุดไว้
+    // ให้การซิงก์ครั้งถัดไปดึงเฉพาะของใหม่ได้
     let fp = null;
-    if (!force && AssetStore.roundFingerprint) {
+    if (AssetStore.roundFingerprint) {
       try { fp = await AssetStore.roundFingerprint(id); } catch (e) { fp = null; }
     }
     const cur = state.roundSync && state.roundSync.id === id ? state.roundSync : null;
@@ -981,7 +983,7 @@ const App = (() => {
       cacheSet('avSync_' + id, state.roundSync);
     };
     // ── ทางประหยัด: มีลายนิ้วมือทั้งของเก่าและของใหม่ เทียบได้ว่าอะไรเปลี่ยนบ้าง ──
-    if (fp && cur && cur.logsAt !== undefined && state.master.length) {
+    if (!force && fp && cur && cur.logsAt !== undefined && state.master.length) {
       const jobs = [];
       let changed = false;
       if (fp.masters !== state.master.length || fp.mastersAt !== cur.mastersAt) {
@@ -1049,7 +1051,9 @@ const App = (() => {
           leaveHeldRound();
         } else {
           state.activeSession = fresh;
-          await syncRound(fresh.sessionId);
+          // กดปุ่มรีเฟรชเอง = โหลดใหม่ทั้งรอบ (ปุ่มนี้คือทางแก้เวลาข้อมูลในเครื่องเพี้ยน)
+          // ส่วนการซิงก์อัตโนมัติทุก 2 นาทีใช้ทางประหยัด
+          await syncRound(fresh.sessionId, { force: !silent });
         }
       }
       flushQueue();
