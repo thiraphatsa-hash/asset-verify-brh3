@@ -317,6 +317,34 @@ const AssetStore = (function () {
       'log_id, session_id, inventory_number, result, condition, verified_at, inspector, unregistered',
       'verified_at', true);
   }
+  /** ผลตรวจที่ใหม่กว่าเวลาที่ระบุ (ใช้ซิงก์แบบเพิ่มทีละส่วน ไม่ต้องโหลดทั้งรอบซ้ำ) */
+  async function loadLogsSince(sessionId, sinceIso) {
+    if (!sessionId || !sinceIso) return [];
+    return fetchPaged('asset_verify_log', '*', 'created_at', true,
+      (q) => q.eq('session_id', sessionId).gte('created_at', sinceIso));
+  }
+  // ── ตัวช่วยประหยัด egress (asset-speed.sql) ────────────────────────────────
+  // ถ้ายังไม่ได้รันไฟล์ SQL นี้ ทั้งสองฟังก์ชันคืน null แล้วแอปจะกลับไปโหลดแบบเดิม
+  const NO_RPC = /could not find the function|does not exist|schema cache/i;
+  /** ลายนิ้วมือของรอบ: { masters, mastersAt, logs, logsAt, counts, countsAt } */
+  async function roundFingerprint(sessionId) {
+    if (!sessionId) return null;
+    const { data, error } = await getClient().rpc('round_fingerprint', { sid: sessionId });
+    if (error) {
+      if (NO_RPC.test(error.message || '')) return null;
+      throw new Error(error.message);
+    }
+    return data ? rowToObj(data) : null;
+  }
+  /** ความคืบหน้าของทุกรอบ นับมาจากฐานข้อมูล — 1 แถวต่อ 1 รอบ */
+  async function loadProgress() {
+    const { data, error } = await getClient().rpc('sessions_progress');
+    if (error) {
+      if (NO_RPC.test(error.message || '')) return null;
+      throw new Error(error.message);
+    }
+    return rowsToObjs(data || []);
+  }
   async function saveVerify(rec) {
     const row = objToRow(rec);
     let res = await getClient().from('asset_verify_log').insert(row).select().maybeSingle();
@@ -503,7 +531,8 @@ const AssetStore = (function () {
     sendPasswordReset, listProfiles, updateProfile, deleteUserAccount, confirmUserEmail,
     listSessions, createSession, updateSession, deleteSession, loadSessionStatus,
     loadMaster, importAssets, addAssets, setAssetLocation, copyLogs, copyCounts,
-    loadLogs, loadLogsSummary, saveVerify, deleteLog, deleteLogsFor, subscribeLogs, unsubscribe,
+    loadLogs, loadLogsSummary, loadLogsSince, roundFingerprint, loadProgress,
+    saveVerify, deleteLog, deleteLogsFor, subscribeLogs, unsubscribe,
     loadCounts, saveCount, deleteCount,
     uploadPhoto, photoUrls, downloadPhoto
   };

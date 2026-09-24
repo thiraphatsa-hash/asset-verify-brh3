@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.10.0';
+  const APP_VERSION = 'v2.11.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -180,6 +180,8 @@ const App = (() => {
     canWrite: false,
     sessions: [],
     logSummary: [],
+    progress: {},            // sessionId → {checked, found, notfound, moved} นับมาจากฐานข้อมูล
+    roundSync: null,         // ลายนิ้วมือของรอบที่โหลดไว้ล่าสุด — ใช้ข้ามการโหลดซ้ำ
     activeSession: null,
     master: [],
     logs: [],
@@ -920,6 +922,7 @@ const App = (() => {
     await loadQueue();
     state.sessions = cacheGet('avSessions') || [];
     state.logSummary = cacheGet('avLogSummary') || [];
+    state.progress = cacheGet('avProgress') || {};
     renderSessions();
     go('home');
     refreshAll(true);
@@ -927,15 +930,112 @@ const App = (() => {
   }
 
   // ── โหลดข้อมูล ─────────────────────────────────────────────────────────────
+  // หลักการประหยัดเน็ต (egress): ไม่ดึงข้อมูลที่เครื่องมีอยู่แล้วซ้ำ
+  //   • หน้าแรก — ให้ฐานข้อมูลนับความคืบหน้าของทุกรอบมาให้ (ไม่กี่แถว)
+  //     แทนการดาวน์โหลดผลตรวจทุกแถวของทุกรอบมานับเอง
+  //   • รอบที่เปิดอยู่ — ถาม "ลายนิ้วมือ" ของรอบก่อน (จำนวนแถว + เวลาล่าสุด ไม่กี่ร้อยไบต์)
+  //     เหมือนเดิม = ไม่โหลดอะไรเลย · มีของใหม่ = ดึงเฉพาะผลตรวจที่ใหม่กว่าครั้งก่อน
+  //   • ถ้ายังไม่ได้รัน asset-speed.sql ทุกอย่างจะกลับไปทำงานแบบเดิมโดยอัตโนมัติ
+  /** ความคืบหน้าของรอบที่นับมาจากฐานข้อมูล (null = ยังไม่มีข้อมูลฝั่งเซิร์ฟเวอร์) */
+  function progressOf(id) {
+    const p = state.progress ? state.progress[id] : null;
+    return p || null;
+  }
+  /** รวมจำนวนที่ตรวจไปแล้วของทุกรอบ (ใช้แสดงในหน้าจัดการระบบ) */
+  function checkedAllRounds() {
+    const keys = Object.keys(state.progress || {});
+    if (keys.length) return keys.reduce((n, k) => n + state.progress[k].checked, 0);
+    return (state.logSummary || []).length;
+  }
+  async function loadProgressSafe() {
+    if (!AssetStore.loadProgress) return false;
+    let rows = null;
+    try { rows = await AssetStore.loadProgress(); } catch (e) { rows = null; }
+    if (!rows) return false;
+    const map = {};
+    rows.forEach((r) => {
+      map[r.sessionId] = {
+        checked: Number(r.checked) || 0, found: Number(r.found) || 0,
+        notfound: Number(r.notfound) || 0, moved: Number(r.moved) || 0
+      };
+    });
+    state.progress = map;
+    cacheSet('avProgress', map);
+    return true;
+  }
+  /**
+   * ซิงก์รอบที่เปิดอยู่ให้ทันสมัยโดยโหลดน้อยที่สุด
+   * opts.force = โหลดใหม่ทั้งรอบ (ใช้ตอนเพิ่งคัดลอกผล/นำเข้าทะเบียน)
+   */
+  async function syncRound(id, opts) {
+    const force = Boolean(opts && opts.force);
+    let fp = null;
+    if (!force && AssetStore.roundFingerprint) {
+      try { fp = await AssetStore.roundFingerprint(id); } catch (e) { fp = null; }
+    }
+    const cur = state.roundSync && state.roundSync.id === id ? state.roundSync : null;
+    const remember = () => {
+      state.roundSync = fp
+        ? { id: id, mastersAt: fp.mastersAt, logsAt: fp.logsAt, countsAt: fp.countsAt }
+        : { id: id };
+      cacheSet('avSync_' + id, state.roundSync);
+    };
+    // ── ทางประหยัด: มีลายนิ้วมือทั้งของเก่าและของใหม่ เทียบได้ว่าอะไรเปลี่ยนบ้าง ──
+    if (fp && cur && cur.logsAt !== undefined && state.master.length) {
+      const jobs = [];
+      let changed = false;
+      if (fp.masters !== state.master.length || fp.mastersAt !== cur.mastersAt) {
+        jobs.push(AssetStore.loadMaster(id).then((rows) => {
+          state.master = rows; changed = true; cacheSet('avMaster_' + id, rows);
+        }));
+      }
+      if (fp.logs !== state.logs.length || fp.logsAt !== cur.logsAt) {
+        // ผลตรวจลดลง = มีการลบ → ต้องโหลดใหม่ทั้งรอบ ไม่งั้นแถวที่ถูกลบจะค้างในเครื่อง
+        if (fp.logs < state.logs.length || !cur.logsAt) {
+          jobs.push(AssetStore.loadLogs(id).then((rows) => { state.logs = rows; changed = true; }));
+        } else {
+          jobs.push(AssetStore.loadLogsSince(id, cur.logsAt).then((rows) => {
+            rows.forEach((l) => addLogLocal(l));
+            changed = true;
+          }));
+        }
+      }
+      if (fp.counts !== state.counts.length || fp.countsAt !== cur.countsAt) {
+        jobs.push(AssetStore.loadCounts(id).then((rows) => {
+          state.counts = rows || []; changed = true; cacheSet('avCounts_' + id, state.counts);
+        }));
+      }
+      if (jobs.length) await Promise.all(jobs);
+      // จำนวนยังไม่ตรงหลังรวมของใหม่ = มีแถวที่หายไประหว่างทาง → โหลดเต็มรอบเดียวจบ
+      if (fp.logs !== state.logs.length) { state.logs = await AssetStore.loadLogs(id); changed = true; }
+      remember();
+      if (changed) { cacheSet('avLogs_' + id, state.logs); afterDataChange(); }
+      return changed;
+    }
+    // ── ทางปกติ: โหลดครบทั้งรอบ (เปิดรอบครั้งแรก / สั่ง force / ยังไม่ได้รัน asset-speed.sql) ──
+    const data = await Promise.all([
+      AssetStore.loadMaster(id), AssetStore.loadLogs(id), AssetStore.loadCounts(id)]);
+    state.master = data[0];
+    state.logs = data[1];
+    state.counts = data[2] || [];
+    cacheSet('avMaster_' + id, state.master);
+    cacheSet('avLogs_' + id, state.logs);
+    cacheSet('avCounts_' + id, state.counts);
+    remember();
+    afterDataChange();
+    return true;
+  }
   async function refreshAll(silent) {
     if (!state.profile) return;
     try {
       if (!silent) busy('กำลังโหลดข้อมูล...');
-      const results = await Promise.all([AssetStore.listSessions(), AssetStore.loadLogsSummary()]);
+      const results = await Promise.all([AssetStore.listSessions(), loadProgressSafe()]);
       state.sessions = results[0];
-      state.logSummary = results[1];
       cacheSet('avSessions', state.sessions);
-      cacheSet('avLogSummary', state.logSummary);
+      if (!results[1]) {                      // ยังไม่ได้รัน asset-speed.sql — นับเองแบบเดิม
+        state.logSummary = await AssetStore.loadLogsSummary();
+        cacheSet('avLogSummary', state.logSummary);
+      }
       renderSessions();
       if (state.activeSession) {
         const fresh = state.sessions.find((s) => s.sessionId === state.activeSession.sessionId);
@@ -949,16 +1049,7 @@ const App = (() => {
           leaveHeldRound();
         } else {
           state.activeSession = fresh;
-          const data = await Promise.all([
-            AssetStore.loadMaster(fresh.sessionId), AssetStore.loadLogs(fresh.sessionId),
-            AssetStore.loadCounts(fresh.sessionId)]);
-          state.master = data[0];
-          state.logs = data[1];
-          state.counts = data[2] || [];
-          cacheSet('avMaster_' + fresh.sessionId, state.master);
-          cacheSet('avLogs_' + fresh.sessionId, state.logs);
-          cacheSet('avCounts_' + fresh.sessionId, state.counts);
-          afterDataChange();
+          await syncRound(fresh.sessionId);
         }
       }
       flushQueue();
@@ -1065,24 +1156,33 @@ const App = (() => {
   // ── หน้าหลัก: รอบตรวจ ──────────────────────────────────────────────────────
   function sessionStats(s) {
     const id = s.sessionId;
-    const seen = new Set();
+    let seenCount = 0;
     let found = 0, notfound = 0, moved = 0;
-    const latest = new Map();
-    const rows = state.logSummary.filter((l) => l.sessionId === id)
-      .concat(queueOfSession(id));
-    rows.forEach((l) => {
-      if (l.unregistered) return;
-      if (isNewer(l, latest.get(l.inventoryNumber))) latest.set(l.inventoryNumber, l);
-    });
-    latest.forEach((l) => {
-      seen.add(l.inventoryNumber);
-      const c = classify(l);
-      if (c === 'found') found++;
-      else if (c === 'notfound') notfound++;
-      else if (c === 'moved') moved++;
-    });
+    const active = Boolean(state.activeSession && state.activeSession.sessionId === id);
+    const server = progressOf(id);
+    // รอบที่ไม่ได้เปิดอยู่ + มีตัวเลขจากฐานข้อมูล → ใช้เลย ไม่ต้องดาวน์โหลดผลตรวจมานับเอง
+    if (!active && server) {
+      seenCount = server.checked;
+      found = server.found; notfound = server.notfound; moved = server.moved;
+    } else {
+      // รอบที่เปิดอยู่คิดจากผลตรวจจริงในเครื่อง (รวมที่ยังรอส่ง) ให้ตรงกับหน้ารายการเสมอ
+      const latest = new Map();
+      const rows = active ? allLogs()
+        : state.logSummary.filter((l) => l.sessionId === id).concat(queueOfSession(id));
+      rows.forEach((l) => {
+        if (l.unregistered) return;
+        if (isNewer(l, latest.get(l.inventoryNumber))) latest.set(l.inventoryNumber, l);
+      });
+      latest.forEach((l) => {
+        seenCount++;
+        const c = classify(l);
+        if (c === 'found') found++;
+        else if (c === 'notfound') notfound++;
+        else if (c === 'moved') moved++;
+      });
+    }
     const total = s.assetCount || 0;
-    const done = Math.min(seen.size, total || seen.size);
+    const done = Math.min(seenCount, total || seenCount);
     return {
       total: total, done: done, pending: Math.max(total - done, 0),
       found: found, notfound: notfound, moved: moved,
@@ -1232,20 +1332,14 @@ const App = (() => {
     state.master = cacheGet('avMaster_' + id) || [];
     state.logs = cacheGet('avLogs_' + id) || [];
     state.counts = cacheGet('avCounts_' + id) || [];
+    // ลายนิ้วมือของครั้งก่อนอยู่ในเครื่อง → เปิดรอบเดิมซ้ำจะโหลดเฉพาะส่วนที่เปลี่ยน
+    state.roundSync = cacheGet('avSync_' + id) || null;
     startGeoWatch();                    // เก็บพิกัดล่าสุดไว้ให้ทุกวิธีบันทึกใช้ร่วมกัน
     afterDataChange();
     go(target || 'list');
     try {
       busy('กำลังโหลดทะเบียนของรอบนี้...');
-      const data = await Promise.all([
-        AssetStore.loadMaster(id), AssetStore.loadLogs(id), AssetStore.loadCounts(id)]);
-      state.master = data[0];
-      state.logs = data[1];
-      state.counts = data[2] || [];
-      cacheSet('avMaster_' + id, state.master);
-      cacheSet('avLogs_' + id, state.logs);
-      cacheSet('avCounts_' + id, state.counts);
-      afterDataChange();
+      await syncRound(id);
       ensureRealtime();
     } catch (e) {
       toast('โหลดข้อมูลรอบนี้ไม่สำเร็จ: ' + e.message, 'error');
@@ -1660,8 +1754,15 @@ const App = (() => {
   }
   function renderCopySources() {
     const s = state.activeSession;
+    // จำนวนที่ตรวจไปแล้วของแต่ละรอบ — ใช้ตัวเลขที่ฐานข้อมูลนับมาให้ก่อน
     const logCount = {};
-    (state.logSummary || []).forEach((l) => { logCount[l.sessionId] = (logCount[l.sessionId] || 0) + 1; });
+    const seenBy = {};
+    (state.logSummary || []).forEach((l) => {
+      const set = seenBy[l.sessionId] || (seenBy[l.sessionId] = new Set());
+      if (!l.unregistered) set.add(l.inventoryNumber);
+    });
+    Object.keys(seenBy).forEach((k) => { logCount[k] = seenBy[k].size; });
+    Object.keys(state.progress || {}).forEach((k) => { logCount[k] = state.progress[k].checked; });
     const list = state.sessions.filter((x) => x.sessionId !== s.sessionId)
       .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     el('copySources').innerHTML = list.length ? list.map((x) => {
@@ -1670,7 +1771,7 @@ const App = (() => {
         '<input type="checkbox"' + (on ? ' checked' : '') +
         ' onchange="App.toggleCopySource(\'' + esc(x.sessionId) + '\', this.checked)">' +
         '<span><b>' + esc(copyRoundName(x.sessionId)) + '</b>' +
-        '<small>ทะเบียน ' + (x.assetCount || 0) + ' รายการ · ผลตรวจ ' + (logCount[x.sessionId] || 0) + ' ครั้ง' +
+        '<small>ทะเบียน ' + (x.assetCount || 0) + ' รายการ · ตรวจแล้ว ' + (logCount[x.sessionId] || 0) + ' รายการ' +
         (x.inspectorName ? ' · ' + esc(x.inspectorName) : '') + '</small></span></label>';
     }).join('') : '<p class="hint">ยังไม่มีรอบอื่นในระบบ</p>';
   }
@@ -6231,14 +6332,14 @@ const App = (() => {
     el('sysInfo').innerHTML =
       '<span>เวอร์ชัน: ' + APP_VERSION + '</span>' +
       '<span>รอบตรวจทั้งหมด: ' + state.sessions.length + ' รอบ · ทรัพย์สินรวม ' + totalAssets + ' รายการ</span>' +
-      '<span>ผลตรวจทั้งระบบ: ' + state.logSummary.length + ' รายการ · รอส่งในเครื่องนี้: ' +
+      '<span>ตรวจแล้วทั้งระบบ: ' + checkedAllRounds() + ' รายการ · รอส่งในเครื่องนี้: ' +
         state.queueItems.length + '</span>' +
       '<span><button class="outline-button" type="button" onclick="App.clearLocalCache()">ล้าง cache เครื่องนี้ (ไม่ลบคิวรอส่ง)</button></span>';
   }
   function clearLocalCache() {
     try {
       Object.keys(localStorage).forEach((k) => {
-        if (/^av(Master_|Logs_|Sessions|LogSummary|Profile)/.test(k)) localStorage.removeItem(k);
+        if (/^av(Master_|Logs_|Counts_|Sync_|Sessions|LogSummary|Progress|Profile)/.test(k)) localStorage.removeItem(k);
       });
     } catch (e) {}
     location.reload();
