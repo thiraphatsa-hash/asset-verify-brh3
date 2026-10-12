@@ -510,6 +510,12 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
 .asset-inv { font-weight: 600; font-size: 15.5px; }
 .asset-desc { font-size: 14px; }
 .asset-meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 3px 9px; }
+/* ป้ายโครงการบนการ์ด — รอบที่รวมหลายโครงการต้องรู้ทันทีว่าแถวนี้ของโครงการไหน */
+.proj-tag {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: .2px;
+  color: var(--accent); background: var(--accent-tint);
+  border: 1px solid var(--line); border-radius: 5px; padding: 0 5px;
+}
 .empty-note { text-align: center; color: var(--muted); padding: 26px 10px; font-size: 14px; }
 /* การ์ดของนอกทะเบียน — ไม่มีแถวในทะเบียน จึงใช้เส้นประบอกว่าเป็นของนอกรายการ */
 .unl-row { border-left-color: var(--dmg); border-style: dashed; }
@@ -565,6 +571,22 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
   margin-top: 12px; font-size: 13.5px; background: var(--surface-2);
   border: 1px solid var(--line); border-radius: var(--r); padding: 12px;
 }
+/* เลือกโครงการตอนนำเข้า — ไฟล์ SAP ไฟล์เดียวมักมีหลายโครงการปนกัน */
+.import-projects {
+  margin-top: 10px; background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 12px;
+}
+.import-projects h4 { margin: 0 0 8px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.proj-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.proj-opt {
+  display: flex; gap: 9px; align-items: flex-start; cursor: pointer; font-size: 13.5px;
+  border: 1px solid var(--line); border-radius: var(--r); padding: 9px 11px; background: var(--surface);
+}
+.proj-opt.on { border-color: var(--accent); background: var(--accent-tint); }
+.proj-opt input { margin-top: 3px; }
+.proj-opt b { font-family: var(--font-mono); font-size: 13px; }
+.proj-opt small { display: block; color: var(--faint); font-size: 12.5px; margin-top: 2px; }
+.proj-sum { margin: 10px 0 0; font-size: 13.5px; }
 .round-form { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
 .import-actions { display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end; }
 .users-list { display: flex; flex-direction: column; gap: 8px; }

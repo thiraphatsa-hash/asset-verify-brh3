@@ -40,6 +40,8 @@ asset-verify/
 
 - **Frontend** — static HTML/CSS/vanilla JS ไม่มี build step (แก้ไฟล์แล้ว push ได้เลย)
 - **Backend** — Supabase: PostgreSQL + Auth + Storage + Realtime
+- **หลายโครงการในรอบเดียว** — ไฟล์ SAP ของสถานที่เดียวกันมักมีหลายโครงการปนกัน (คอลัมน์ `Current Site`)
+  ตอนนำเข้าเลือกได้ว่าจะเอาโครงการไหนบ้าง แล้วกรอง/สรุป/ออกชีท Excel แยกรายโครงการได้ (ไม่ต้องมีคอลัมน์ DB เพิ่ม)
 - **รอบการตรวจนับ (เหมือน MCR)** — `asset_sessions` : **1 รอบ = 1 ไฟล์ทะเบียนที่อัปโหลด**
   แต่ละรอบมีทะเบียนของตัวเองใน `asset_master` (ผูก `session_id`) · ลบรอบ = ลบทะเบียน+ผลตรวจของรอบนั้น (cascade)
 - **ผลตรวจ** — `asset_verify_log` **append-only** 1 การตรวจ = 1 แถว ไม่มี policy update เลยในระดับฐานข้อมูล

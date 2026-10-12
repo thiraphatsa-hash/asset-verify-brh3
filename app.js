@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.11.0';
+  const APP_VERSION = 'v2.12.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -194,7 +194,7 @@ const App = (() => {
     page: 'home',
     home: { q: '', status: '', sort: 'created' },
     ui: {
-      type: 'FIXED', view: 'table', q: '', cat: '', staff: '', area: '', status: '', sort: 'inv',
+      type: 'FIXED', view: 'table', q: '', cat: '', staff: '', area: '', proj: '', status: '', sort: 'inv',
       limit: 150,                                // แถวที่วาดอยู่ (= PAGE_SIZE) เพิ่มเองเมื่อเลื่อนถึงท้าย
       cols: { FIXED: null, RENTAL: null }        // null = อัตโนมัติตามขนาดจอ
     },
@@ -1495,6 +1495,72 @@ const App = (() => {
       costCenter: costCenter, swapped: swapped, bad: bad
     };
   }
+  // ── เลือกโครงการตอนนำเข้า ──────────────────────────────────────────────────
+  // ไฟล์ SAP ของสถานที่เดียวกันมักมีหลายโครงการปนมาในไฟล์เดียว (คอลัมน์ Current Site)
+  // ให้ติ๊กเลือกได้ว่าจะเอาโครงการไหนเข้ารอบนี้บ้าง — ค่าเริ่มต้นคือเอาทุกโครงการ
+  /** รหัสโครงการของรอบ เดาจากรายการที่เลือกไว้: โครงการเดียว = SHK1 · หลายโครงการ = SHK1+SHK2 */
+  function siteGuess(rows, costCenter) {
+    const codes = [];
+    (rows || []).forEach((r) => {
+      const c = projectOf(r);
+      if (c && codes.indexOf(c) < 0) codes.push(c);
+    });
+    if (codes.length > 1) return codes.sort().map(shortProj).join('+');
+    const cc = codes[0] || costCenter || '';
+    const m = String(cc).match(/^R-([A-Z0-9]+)-/i);
+    if (m) return m[1].toUpperCase();
+    if (costCenter) {
+      const m2 = String(costCenter).match(/^R-([A-Z0-9]+)-/i);
+      if (m2) return m2[1].toUpperCase();
+    }
+    const plant = ((rows || []).find((r) => r.plant) || {}).plant;
+    if (plant) return String(plant).toUpperCase();
+    return (CFG.SITE || '').toUpperCase();
+  }
+  /** แถวที่จะนำเข้าจริง = เฉพาะโครงการที่ติ๊กไว้ (ไม่มีตัวเลือก = ทุกแถว) */
+  function pickedImportRows() {
+    const d = state.importData;
+    if (!d) return [];
+    if (!d.pick) return d.rows;
+    return d.rows.filter((r) => d.pick.indexOf(projectOf(r) || NO_PROJ) >= 0);
+  }
+  function renderImportProjects() {
+    const box = el('importProjects');
+    const d = state.importData;
+    const groups = d ? d.projects || [] : [];
+    const real = groups.filter((g) => g.code !== NO_PROJ).length;
+    if (!d || real < 2) {                       // ไฟล์โครงการเดียว — ไม่ต้องมีอะไรให้เลือก
+      box.classList.add('hidden');
+      box.innerHTML = '';
+      return;
+    }
+    const picked = pickedImportRows();
+    box.innerHTML =
+      '<h4>' + icon('building') + ' ไฟล์นี้มี ' + real + ' โครงการ — เลือกที่จะนำเข้ารอบนี้</h4>' +
+      '<div class="proj-pick">' + groups.map((g) => {
+        const on = d.pick.indexOf(g.code) >= 0;
+        return '<label class="proj-opt' + (on ? ' on' : '') + '">' +
+          '<input type="checkbox"' + (on ? ' checked' : '') +
+          ' onchange="App.toggleImportProject(\'' + esc(g.code) + '\', this.checked)">' +
+          '<span><b>' + esc(projLabel(g.code)) + '</b><small>' + g.n + ' รายการ</small></span></label>';
+      }).join('') + '</div>' +
+      '<p class="proj-sum">จะนำเข้า <b>' + picked.length + '</b> จาก ' + d.rows.length + ' รายการ' +
+      (picked.length ? '' : ' — <span class="warn-inline">ต้องเลือกอย่างน้อย 1 โครงการ</span>') + '</p>';
+    box.classList.remove('hidden');
+  }
+  function toggleImportProject(code, on) {
+    const d = state.importData;
+    if (!d || !d.pick) return;
+    const i = d.pick.indexOf(code);
+    if (on && i < 0) d.pick.push(code);
+    if (!on && i >= 0) d.pick.splice(i, 1);
+    renderImportProjects();
+    // รหัสโครงการของรอบเปลี่ยนตามสิ่งที่เลือก ตราบใดที่ผู้ใช้ยังไม่ได้พิมพ์เอง
+    const siteInput = el('roundSite');
+    if (siteInput && !state.importAppend && !siteInput.dataset.touched) {
+      siteInput.value = siteGuess(pickedImportRows(), d.costCenter);
+    }
+  }
   /** แถวที่ถูกข้ามเพราะรหัสรูปแบบผิด — บอกให้เห็นก่อนกดสร้าง ไม่ให้หายเงียบๆ อีก */
   function badRowsNote(bad) {
     if (!bad.length) return '';
@@ -1556,7 +1622,10 @@ const App = (() => {
         const fresh = rows.filter((r) => !have.has(r.inventoryNumber));
         const fFixed = fresh.filter((r) => r.assetType === 'FIXED').length;
         state.importData = {
-          rows: fresh, fileName: file.name, fixed: fFixed, rental: fresh.length - fFixed
+          rows: fresh, fileName: file.name, fixed: fFixed, rental: fresh.length - fFixed,
+          costCenter: costCenter,
+          projects: projectGroups(fresh),
+          pick: projectGroups(fresh).map((g) => g.code)
         };
         el('uploadZoneText').innerHTML = icon('note') + ' ' + esc(file.name);
         el('importPreview').innerHTML =
@@ -1570,6 +1639,7 @@ const App = (() => {
             : '<br><span class="hint-inline">ทุกรายการในไฟล์มีอยู่ในรอบนี้แล้ว ไม่มีอะไรต้องเพิ่ม</span>') +
           sheetNote + badRowsNote(bad);
         el('importPreview').classList.remove('hidden');
+        renderImportProjects();
         el('roundForm').classList.add('hidden');
         el('appendForm').classList.toggle('hidden', !fresh.length);
         return;
@@ -1577,18 +1647,13 @@ const App = (() => {
 
       const fixed = rows.filter((r) => r.assetType === 'FIXED').length;
       const rental = rows.length - fixed;
-      // เดารหัสโครงการจากข้อมูลจริง
-      let site = '';
+      // เดารหัสโครงการจากข้อมูลจริง (หลายโครงการในไฟล์เดียว = SHK1+SHK2+SHK3)
       const cc = costCenter || (rows.find((r) => r.currentSite) || {}).currentSite || '';
-      const m = String(cc).match(/^R-([A-Z0-9]+)-/i);
-      if (m) site = m[1].toUpperCase();
-      if (!site) {
-        const plant = (rows.find((r) => r.plant) || {}).plant;
-        if (plant) site = String(plant).toUpperCase();
-      }
-      if (!site) site = (CFG.SITE || '').toUpperCase();
+      const site = siteGuess(rows, costCenter);
+      const projs = projectGroups(rows);
 
-      state.importData = { rows: rows, fileName: file.name, fixed: fixed, rental: rental };
+      state.importData = { rows: rows, fileName: file.name, fixed: fixed, rental: rental,
+        costCenter: costCenter, projects: projs, pick: projs.map((g) => g.code) };
       el('uploadZoneText').innerHTML = icon('note') + ' ' + esc(file.name);
       el('importPreview').innerHTML =
         'อ่านไฟล์สำเร็จ — <b>' + rows.length + '</b> รายการ ' +
@@ -1601,8 +1666,10 @@ const App = (() => {
         (rental === 0 ? '<br><span class="warn-inline">ไม่พบรายการ "ทรัพย์สินของเช่า" ในไฟล์นี้ — ' +
           'ตรวจว่าชีทของเช่ามีหัวคอลัมน์ Material และ Inventory Number ครบ</span>' : '');
       el('importPreview').classList.remove('hidden');
+      renderImportProjects();
       el('roundForm').classList.remove('hidden');
       el('roundSite').value = site;
+      delete el('roundSite').dataset.touched;
       el('roundCostCenter').value = cc;
       if (!el('roundFrom').value) el('roundFrom').value = todayISO();
       if (!el('roundInspector').value) el('roundInspector').value = inspectorName();
@@ -1610,6 +1677,7 @@ const App = (() => {
       // อ่านไม่ผ่าน ต้องล้างผลของไฟล์ก่อนหน้าทิ้ง ไม่งั้นดูเหมือนอ่านไฟล์ใหม่สำเร็จ
       state.importData = null;
       el('importPreview').classList.add('hidden');
+      el('importProjects').classList.add('hidden');
       el('roundForm').classList.add('hidden');
       el('appendForm').classList.add('hidden');
       el('uploadZoneText').textContent = 'แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน';
@@ -1622,6 +1690,7 @@ const App = (() => {
     const back = state.importAppend ? 'list' : 'home';   // มาจากในรอบ ก็กลับไปในรอบ
     state.importData = null;
     el('importPreview').classList.add('hidden');
+    el('importProjects').classList.add('hidden');
     el('roundForm').classList.add('hidden');
     el('appendForm').classList.add('hidden');
     el('uploadZoneText').textContent = 'แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน';
@@ -1657,6 +1726,7 @@ const App = (() => {
     state.importAppend = s.sessionId;
     state.importData = null;
     el('importPreview').classList.add('hidden');
+    el('importProjects').classList.add('hidden');
     el('roundForm').classList.add('hidden');
     el('appendForm').classList.add('hidden');
     go('upload');
@@ -1672,8 +1742,10 @@ const App = (() => {
       // ระหว่างเปิดหน้านี้ คนอื่นอาจเพิ่มไปก่อนแล้ว → เทียบกับบนเซิร์ฟเวอร์อีกรอบก่อนเขียน
       const current = await AssetStore.loadMaster(sid);
       const have = new Set(current.map((a) => a.inventoryNumber));
-      const rows = data.rows.filter((r) => !have.has(r.inventoryNumber))
+      // เอาเฉพาะโครงการที่ติ๊กไว้ เหมือนตอนสร้างรอบ
+      const rows = pickedImportRows().filter((r) => !have.has(r.inventoryNumber))
         .map((r) => Object.assign({ site: s.site }, r));
+      const wanted = rows.length;
       let added = [];
       if (rows.length) {
         busy('กำลังเพิ่ม ' + rows.length + ' รายการเข้ารอบ...');
@@ -1691,9 +1763,10 @@ const App = (() => {
       } catch (e) { /* ทะเบียนเพิ่มสำเร็จแล้ว ตัวเลขบนการ์ดคลาดได้ชั่วคราว */ }
       state.importData = null;
       el('importPreview').classList.add('hidden');
+      el('importProjects').classList.add('hidden');
       el('appendForm').classList.add('hidden');
       await refreshAll(true);
-      const skippedByOthers = data.rows.length - added.length;
+      const skippedByOthers = wanted - added.length;
       toast('เพิ่มเข้ารอบแล้ว ' + added.length + ' รายการ' +
         (skippedByOthers > 0 ? ' (อีก ' + skippedByOthers + ' รายการมีคนเพิ่มไปก่อนแล้ว)' : ''), 'success');
       openSession(sid);
@@ -2090,7 +2163,14 @@ const App = (() => {
     if (!site) return toast('กรอกรหัสโครงการ (Site) ก่อน', 'warn');
     const from = el('roundFrom').value;
     if (!from) return toast('เลือกวันที่เริ่มตรวจก่อน', 'warn');
-    const data = state.importData;
+    // เอาเฉพาะโครงการที่ติ๊กไว้ (ไฟล์โครงการเดียวก็คือทุกแถวตามเดิม)
+    const picked = pickedImportRows();
+    if (!picked.length) return toast('เลือกอย่างน้อย 1 โครงการก่อนสร้างรอบ', 'warn');
+    const data = Object.assign({}, state.importData, {
+      rows: picked,
+      fixed: picked.filter((r) => r.assetType === 'FIXED').length,
+      rental: picked.filter((r) => r.assetType !== 'FIXED').length
+    });
     const holdNew = isAdminUser() && el('roundHold').checked;   // สร้างแบบพักไว้ เตรียมข้อมูลก่อนเปิดใช้
     const dup = state.sessions.find((s) => s.site === site && s.countDateFrom === from);
     if (dup && !window.confirm('มีรอบตรวจของโครงการ ' + site + ' วันที่เดียวกันอยู่แล้ว\nยืนยันสร้างรอบใหม่อีกรอบ?')) return;
@@ -2121,6 +2201,7 @@ const App = (() => {
       }
       state.importData = null;
       el('importPreview').classList.add('hidden');
+      el('importProjects').classList.add('hidden');
       el('roundForm').classList.add('hidden');
       el('uploadZoneText').textContent = 'แตะเพื่อเลือกไฟล์ทะเบียนทรัพย์สิน';
       ['roundName', 'roundNote', 'roundTo'].forEach((id) => { el(id).value = ''; });
@@ -2160,8 +2241,54 @@ const App = (() => {
   function mastersOfType() {
     return state.master.filter((a) => a.assetType === state.ui.type);
   }
+  // ── โครงการ (คอลัมน์ Current Site ของ SAP) ─────────────────────────────────
+  // หลายโครงการอยู่ในสถานที่เดียวกันได้ และรหัสทรัพย์สินแยกตามโครงการ — รอบตรวจ
+  // จึงรวมได้ทุกโครงการในรอบเดียว แล้วค่อยกรอง/สรุป/ออกรายงานแยกรายโครงการทีหลัง
+  const NO_PROJ = '__NONE__';                       // แถวที่ไม่มี Current Site (เช่น ของเช่า)
+  const projectOf = (a) => String((a && a.currentSite) || '').trim();
+  const projLabel = (code) => (!code || code === NO_PROJ ? '(ไม่ระบุโครงการ)' : code);
+  /** รหัสสั้นของโครงการ: R-SHK1-10A12 → SHK1 (ใช้เป็นรหัสรอบ ไม่ใช่ชื่อที่โชว์ในรายการ) */
+  function shortProj(code) {
+    const m = String(code || '').match(/^R-([A-Z0-9]+)-/i);
+    return m ? m[1].toUpperCase() : String(code || '').toUpperCase();
+  }
+  /** นับรายการของแต่ละโครงการ เรียงตามรหัส — กลุ่ม "ไม่ระบุ" ไว้ท้ายสุดเสมอ */
+  function projectGroups(list) {
+    const n = {};
+    (list || []).forEach((a) => {
+      const c = projectOf(a) || NO_PROJ;
+      n[c] = (n[c] || 0) + 1;
+    });
+    return Object.keys(n).map((c) => ({ code: c, n: n[c] })).sort((a, b) => {
+      if (a.code === NO_PROJ) return 1;
+      if (b.code === NO_PROJ) return -1;
+      return a.code.localeCompare(b.code);
+    });
+  }
+  /** รอบนี้มีมากกว่า 1 โครงการจริงไหม — ถ้าไม่มีก็ไม่ต้องรก UI ด้วยตัวกรอง/ป้ายโครงการ */
+  function multiProject() {
+    return projectGroups(state.master).filter((g) => g.code !== NO_PROJ).length > 1;
+  }
   function renderFilterOptions() {
     const list = mastersOfType();
+    // โครงการ — โชว์เฉพาะรอบที่รวมหลายโครงการไว้ด้วยกัน
+    const projSel = el('projFilter');
+    const groups = projectGroups(list);
+    const many = multiProject();
+    projSel.classList.toggle('hidden', !many);
+    if (!many) {
+      state.ui.proj = '';
+      projSel.value = '';
+    } else {
+      const curProj = state.ui.proj;
+      projSel.innerHTML = '<option value="">โครงการ: ทั้งหมด (' + list.length + ')</option>' +
+        groups.map((g) => '<option value="' + esc(g.code) + '">' + esc(projLabel(g.code)) +
+          ' (' + g.n + ')</option>').join('');
+      projSel.value = groups.some((g) => g.code === curProj) ? curProj : '';
+      state.ui.proj = projSel.value;
+    }
+    syncCombo('projFilter');
+
     const sel = el('catFilter');
     const cur = state.ui.cat;
     const counts = {};
@@ -2422,6 +2549,11 @@ const App = (() => {
   function filteredAssets() {
     const ui = state.ui;
     let list = mastersOfType();
+    if (ui.proj) {
+      list = ui.proj === NO_PROJ
+        ? list.filter((a) => !projectOf(a))
+        : list.filter((a) => projectOf(a) === ui.proj);
+    }
     if (ui.cat) list = list.filter((a) => (a.categoryCode || '') === ui.cat);
     if (ui.staff) {
       list = ui.staff === '__NONE__'
@@ -2748,10 +2880,12 @@ const App = (() => {
         ? '<tr id="moreRow" class="more-row"><td colspan="16">' + moreButton(list.length, all.length) + '</td></tr>'
         : '') || '<tr><td colspan="16"><p class="empty-note">ไม่พบรายการตามเงื่อนไข</p></td></tr>';
     } else {
+      const showProj = multiProject();
       el('cardWrap').innerHTML = list.map((a) => {
         const latest = state.latest.get(a.inventoryNumber);
         const cls = classify(latest);
         const meta = [];
+        if (showProj) meta.push('<span class="proj-tag">' + esc(projLabel(projectOf(a))) + '</span>');
         if (isFixed) {
           if (a.staffText) meta.push(icon('user') + ' ' + esc(a.staffText));
           if (a.serialNumber) meta.push('S/N ' + esc(a.serialNumber));
@@ -2819,6 +2953,7 @@ const App = (() => {
   function setCat(v) { state.ui.cat = v; resetLimit(); renderList(); }
   function setStaff(v) { state.ui.staff = v; resetLimit(); renderList(); }
   function setArea(v) { state.ui.area = v; resetLimit(); renderList(); }
+  function setProj(v) { state.ui.proj = v; resetLimit(); renderList(); }
   /**
    * เขียนพื้นที่จัดเก็บลงทะเบียนของรอบนี้ (ผู้ตรวจเติม/แก้เองได้หน้างาน)
    * ต้องออนไลน์ เพราะเป็นการแก้ "ทะเบียน" ไม่ใช่ผลตรวจ (ผลตรวจยังทำออฟไลน์ได้เหมือนเดิม)
@@ -3082,6 +3217,7 @@ const App = (() => {
       state.importAppend = null;
       state.importData = null;
       el('importPreview').classList.add('hidden');
+      el('importProjects').classList.add('hidden');
       el('appendForm').classList.add('hidden');
     }
     state.page = page;
@@ -3185,7 +3321,7 @@ const App = (() => {
       if (asset.assetNumber) info.push(['Asset Number', asset.assetNumber]);
       if (asset.serialNumber) info.push(['Serial', asset.serialNumber]);
       info.push(['ผู้รับผิดชอบ', (asset.staffText || '').trim() || '(ไม่ระบุ)']);
-      if (asset.currentSite) info.push(['Site', asset.currentSite]);
+      if (asset.currentSite) info.push(['โครงการ (Current Site)', asset.currentSite]);
     }
     el('recInfo').innerHTML = info.map((r) =>
       '<b>' + esc(r[0]) + '</b><span>' + esc(r[1]) + '</span>').join('');
@@ -4790,6 +4926,45 @@ const App = (() => {
     st.done = st.total - st.pending;
     return st;
   }
+  /** สถิติของกลุ่มรายการใดก็ได้ (ใช้กับโครงการ) — โครงเดียวกับ typeStats */
+  function statsOf(list) {
+    const st = { total: list.length, pending: 0, found: 0, notfound: 0, moved: 0 };
+    list.forEach((a) => { st[classify(state.latest.get(a.inventoryNumber))]++; });
+    st.done = st.total - st.pending;
+    st.pct = st.total ? Math.round(st.done * 100 / st.total) : 0;
+    return st;
+  }
+  /** สถิติรายโครงการของรอบนี้ — [{code, label, stats}] */
+  function projectStats() {
+    return projectGroups(state.master).map((g) => ({
+      code: g.code,
+      label: projLabel(g.code),
+      stats: statsOf(state.master.filter((a) => (projectOf(a) || NO_PROJ) === g.code))
+    }));
+  }
+  /** ตารางความคืบหน้าแยกรายโครงการ — เห็นทีเดียวว่าโครงการไหนยังเหลือเยอะ */
+  function projectCard() {
+    if (!multiProject()) return '';
+    const rows = projectStats().map((p) => {
+      const st = p.stats;
+      return '<tr><td class="mono nowrap">' + esc(p.label) + '</td>' +
+        '<td class="num">' + st.total + '</td>' +
+        '<td class="num">' + st.done + '</td>' +
+        '<td class="num">' + st.found + '</td>' +
+        '<td class="num">' + st.notfound + '</td>' +
+        '<td class="num">' + st.moved + '</td>' +
+        '<td class="num">' + st.pending + '</td>' +
+        '<td class="c-md"><div class="bar"><i class="' + (st.pct === 100 ? 'ok' : '') +
+          '" style="width:' + st.pct + '%"></i></div></td>' +
+        '<td class="num">' + st.pct + '%</td></tr>';
+    }).join('');
+    return '<div class="dash-card wide"><h4>' + icon('building') + ' ความคืบหน้าแยกตามโครงการ</h4>' +
+      '<div class="table-wrap flat"><table class="asset-table mini"><thead><tr>' +
+      '<th>โครงการ (Current Site)</th><th class="num">ทะเบียน</th><th class="num">ตรวจแล้ว</th>' +
+      '<th class="num">พบ</th><th class="num">ไม่พบ</th><th class="num">ย้ายออก</th>' +
+      '<th class="num">ค้าง</th><th class="c-md">ความคืบหน้า</th><th class="num">%</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+  }
   function groupBars(list, keyFn) {
     const groups = {};
     list.forEach((a) => {
@@ -4981,6 +5156,7 @@ const App = (() => {
             groupBars(state.master, (a) => areaLabel(a.location) || '(ไม่ระบุพื้นที่)') + '</div>'
           : '') +
       '</div>' +
+      projectCard() +
       '<div class="dash-card wide"><h4>รายการตรวจล่าสุด</h4>' +
         (recent ? '<div class="table-wrap flat"><table class="asset-table mini"><thead><tr>' +
           '<th>รหัส</th><th>ชื่อทรัพย์สิน</th><th>ผล</th><th class="c-md">ผู้ตรวจ</th>' +
@@ -5219,6 +5395,19 @@ const App = (() => {
     return cell;
   }
   /** สร้างชีทฟอร์มรายงาน (โครงเดียวกับไฟล์ .xls ต้นฉบับ + คอลัมน์เสริมท้ายตาราง) */
+  /** ชื่อชีทของโครงการ — Excel ห้ามเกิน 31 ตัวและห้ามใช้ : \ / ? * [ ] และห้ามซ้ำกัน */
+  function sheetNameOf(code, wb) {
+    const base = ('Fixed ' + (code === NO_PROJ ? 'ไม่ระบุโครงการ' : code))
+      .replace(/[:\\/?*[\]]/g, '-').slice(0, 31);
+    let name = base;
+    let n = 2;
+    while (wb.getWorksheet(name)) {
+      const tail = ' (' + n + ')';
+      name = base.slice(0, 31 - tail.length) + tail;
+      n++;
+    }
+    return name;
+  }
   function buildFormSheet(wb, s, opts) {
     const ws = wb.addWorksheet(opts.sheetName, {
       views: [{ state: 'frozen', ySplit: 8 }],
@@ -5238,7 +5427,8 @@ const App = (() => {
     title.value = opts.title;
     title.font = { name: 'Tahoma', size: 13, bold: true };
     title.alignment = { horizontal: 'center' };
-    ws.getCell(2, 1).value = 'Site/Cost center......' + (s.costCenter || s.site || '') + '..........';
+    ws.getCell(2, 1).value = 'Site/Cost center......' +
+      (opts.siteText || s.costCenter || s.site || '') + '..........';
     ws.getCell(3, 1).value = 'วันที่…' + days + '.….. /…' +
       TH_MONTHS[from.getMonth()].replace(/\./g, '') + '.... /….' + (from.getFullYear() + 543) + '......';
     ws.getCell(4, 1).value = 'Run Date ' + pad2(d.getDate()) + '.' + pad2(d.getMonth() + 1) + '.' +
@@ -5833,7 +6023,7 @@ const App = (() => {
       // ══ ชีท 1: สรุปผล ══
       const sum = wb.addWorksheet('สรุปผล');
       sum.getColumn(1).width = 34;
-      [16, 14, 12, 20, 26, 14].forEach((w, i) => { sum.getColumn(i + 2).width = w; });
+      [16, 14, 12, 20, 26, 14, 10].forEach((w, i) => { sum.getColumn(i + 2).width = w; });
       const put = (r, c, v, bold) => {
         const cell = sum.getCell(r, c);
         cell.value = v;
@@ -5880,6 +6070,28 @@ const App = (() => {
       put(r + 3, 2, (st.FIXED.total + st.RENTAL.total
         ? Math.round((st.FIXED.done + st.RENTAL.done) * 100 / (st.FIXED.total + st.RENTAL.total)) : 0) + '%');
       r += 5;
+      // ── สรุปแยกตามโครงการ (รอบที่รวมหลายโครงการไว้ในรอบเดียว) ──
+      const projSum = multiProject() ? projectStats() : [];
+      if (projSum.length) {
+        put(r, 1, 'สรุปแยกตามโครงการ (Current Site)', true);
+        r++;
+        ['โครงการ', 'ทะเบียน', 'ตรวจแล้ว', 'พบ', 'ไม่พบ', 'ย้ายออก', 'ยังไม่ตรวจ', '%'].forEach((h, i) => {
+          const cell = put(r, 1 + i, h, true);
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDF1F7' } };
+          cell.border = BORDER;
+        });
+        projSum.forEach((p, i) => {
+          const rr = r + 1 + i;
+          const st2 = p.stats;
+          [p.label, st2.total, st2.done, st2.found, st2.notfound, st2.moved, st2.pending,
+            st2.pct + '%'].forEach((v, c) => {
+            put(rr, 1 + c, v);
+            sum.getCell(rr, 1 + c).border = BORDER;
+            if (c > 0) sum.getCell(rr, 1 + c).alignment = { horizontal: 'center' };
+          });
+        });
+        r += projSum.length + 2;
+      }
       if (dupCodes.length) {
         put(r, 1, 'RT code ที่ใช้ซ้ำหลายชิ้น', true);
         r++;
@@ -5928,19 +6140,20 @@ const App = (() => {
       ].forEach((t, i) => { put(r + 1 + i, 1, t).alignment = { wrapText: false }; });
 
       // ══ ชีท 2: ทรัพย์สิน Fixed Assets (ฟอร์มเดิม + คอลัมน์เสริม) ══
-      const fixedRows = state.master.filter((a) => a.assetType === 'FIXED').map((a, i) => {
+      const fixedAll = state.master.filter((a) => a.assetType === 'FIXED');
+      const fixedRowsOf = (list) => list.map((a, i) => {
         const y = reportCells(a);
         return [i + 1, a.assetClass || '', a.assetNumber || '', a.subNumber || '',
           a.inventoryNumber, a.description || '', a.serialNumber || '', a.staffText || '',
           a.currentSite || '', y.yes, y.no, y.site, y.doc, y.date, y.note,
           a.location || '', y.pieces, y.by, y.at, y.where, y.how];
       });
-      buildFormSheet(wb, s, {
+      const fixedSheet = {
         sheetName: 'ทรัพย์สิน Fixed Assets',
         title: 'รายงานการตรวจสอบทรัพย์สิน Fixed Assets',
         widths: [5, 10, 13, 8, 19, 34, 15, 20, 15, 6, 6, 12, 13, 13, 30, 16, 9, 20, 18, 18, 9],
         descCol: 5, yesCol: 9, noCol: 10, pieceCol: 15,
-        rows: fixedRows,
+        rows: fixedRowsOf(fixedAll),
         head: [
           { r1: 6, c1: 1, r2: 8, c2: 1, text: 'NO.' },
           { r1: 7, c1: 2, r2: 8, c2: 2, text: 'Asset Class' },
@@ -5962,7 +6175,24 @@ const App = (() => {
         ].concat(EXTRA_HEAD.map((t, i) => ({
           r1: 6, c1: 16 + i, r2: 8, c2: 16 + i, text: t, fill: 'FFF2F2F2'
         })))
-      });
+      };
+      buildFormSheet(wb, s, fixedSheet);
+
+      // ══ ชีทแยกรายโครงการ ══
+      // รอบที่รวมหลายโครงการไว้ด้วยกัน (Current Site คนละรหัส) ต้องส่งรายงานแยกให้แต่ละโครงการได้
+      // โครงฟอร์มเหมือนชีทรวมทุกอย่าง ต่างแค่กรองเฉพาะทรัพย์สินของโครงการนั้น
+      if (multiProject()) {
+        projectGroups(fixedAll).forEach((g) => {
+          const list = fixedAll.filter((a) => (projectOf(a) || NO_PROJ) === g.code);
+          if (!list.length) return;
+          buildFormSheet(wb, s, Object.assign({}, fixedSheet, {
+            sheetName: sheetNameOf(g.code, wb),
+            title: 'รายงานการตรวจสอบทรัพย์สิน — ' + projLabel(g.code),
+            siteText: g.code === NO_PROJ ? (s.costCenter || s.site || '') : g.code,
+            rows: fixedRowsOf(list)
+          }));
+        });
+      }
 
       // ══ ชีท 3: ทรัพย์สินของเช่า ══
       const rentalRows = state.master.filter((a) => a.assetType === 'RENTAL').map((a, i) => {
@@ -6481,9 +6711,10 @@ const App = (() => {
     setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession, setRoundHold,
     readMasterFile, confirmImport, cancelImport, openAppendImport, confirmAppend,
     openCopy, closeCopy, toggleCopySource, readCopyFile, analyzeCopy, setCopyMode, confirmCopy,
-    setType, setView, setSearch, setCat, setStaff, setArea, setSort, setStatus, setSelectedArea,
+    setType, setView, setSearch, setCat, setStaff, setArea, setProj, setSort, setStatus, setSelectedArea,
     openAreaPicker, closeAreaPicker, setAreaPickSearch, showMore, useLastArea,
     openQueuePanel, closeQueuePanel, retryQueue, dropQueueItem, dropAllQueue, setCountCustom,
+    toggleImportProject,
     setMapWho, setMapRange, setMapArea,
     toggleColPicker, closeColPicker, toggleCol, pickAllCols, resetCols,
     openCountSheet, closeCount, setCountCat, adjustCount, saveCountEntry, deleteCountEntry,
