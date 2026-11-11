@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.12.0';
+  const APP_VERSION = 'v2.13.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -239,7 +239,71 @@ const App = (() => {
   }
   function busy(text) { el('busyText').textContent = text || 'กำลังดำเนินการ...'; el('busyOverlay').classList.remove('hidden'); }
   function busyHide() { el('busyOverlay').classList.add('hidden'); }
-  function cacheSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} }
+  // ── แคชในเครื่อง ────────────────────────────────────────────────────────────
+  // แคชคือ "สำเนาไว้เปิดเร็ว/ใช้ออฟไลน์" โหลดใหม่จากเซิร์ฟเวอร์ได้เสมอ จึงทิ้งได้
+  // เมื่อพื้นที่ไม่พอ · ผลตรวจที่ยังไม่ได้ส่งอยู่ใน IndexedDB คนละที่ ไม่ถูกลบตามไปด้วย
+  const ROUND_CACHE_RE = /^av(?:Master|Logs|Counts|Sync)_(.+)$/;
+  function lsKeys() {
+    try { return Object.keys(localStorage); } catch (e) { return []; }
+  }
+  function lsDrop(key) { try { localStorage.removeItem(key); } catch (e) {} }
+  /** ทิ้งแคชของรอบที่ไม่ได้เปิดอยู่ คืนพื้นที่ให้ session ล็อกอินและรอบปัจจุบัน */
+  function pruneRoundCaches(keepIds) {
+    const keep = {};
+    (keepIds || []).forEach((id) => { if (id) keep[id] = true; });
+    if (state.activeSession) keep[state.activeSession.sessionId] = true;
+    let dropped = 0;
+    lsKeys().forEach((k) => {
+      const m = k.match(ROUND_CACHE_RE);
+      if (!m || keep[m[1]]) return;
+      lsDrop(k);
+      dropped++;
+    });
+    return dropped;
+  }
+  function cacheSet(key, val) {
+    let text;
+    try { text = JSON.stringify(val); } catch (e) { return; }
+    try { localStorage.setItem(key, text); return; } catch (e) {}
+    // พื้นที่เต็ม — ทิ้งแคชรอบอื่นก่อนแล้วลองใหม่
+    pruneRoundCaches();
+    try { localStorage.setItem(key, text); return; } catch (e) {}
+    // ยังไม่พอ — ทิ้งสรุปผลรวมทุกรอบ (ก้อนใหญ่สุดและคำนวณใหม่ได้)
+    lsDrop('avLogSummary');
+    lsDrop('avProgress');
+    try { localStorage.setItem(key, text); return; } catch (e) {}
+    lsDrop(key);                      // ค่าเดิมที่ค้างอยู่อาจเก่ากว่าของจริง ทิ้งไปเลย
+    warnStorageFull();
+  }
+  /** ขนาดที่ใช้ไปของ localStorage (นับตัวอักษร — เบราว์เซอร์ส่วนใหญ่จำกัดราว 5 ล้าน) */
+  function lsUsedChars() {
+    let n = 0;
+    try {
+      Object.keys(localStorage).forEach((k) => {
+        n += k.length + (localStorage.getItem(k) || '').length;
+      });
+    } catch (e) { return 0; }
+    return n;
+  }
+  /**
+   * กันพื้นที่เต็มก่อนจะเต็มจริง — ใกล้เพดานเมื่อไหร่ให้เหลือแคชเฉพาะรอบที่เปิดอยู่
+   * กับ 2 รอบล่าสุด (รอบอื่นโหลดใหม่ได้) จะได้ไม่ไปชนตอนเขียน session ล็อกอิน
+   */
+  function guardStorage() {
+    if (lsUsedChars() < 3500000) return 0;
+    const keep = (state.sessions || []).slice(0, 2).map((s) => s.sessionId);
+    const dropped = pruneRoundCaches(keep);
+    if (lsUsedChars() >= 3500000) { lsDrop('avLogSummary'); lsDrop('avProgress'); }
+    return dropped;
+  }
+  let storageWarned = false;
+  function warnStorageFull() {
+    state.cacheFull = true;
+    if (storageWarned) return;
+    storageWarned = true;
+    toast('พื้นที่เก็บข้อมูลในเครื่องเต็ม — ยังตรวจและบันทึกได้ตามปกติ ' +
+      'แต่จะไม่เก็บสำเนาไว้เปิดแบบออฟไลน์ (ล้างได้ที่หน้าจัดการ)', 'warn');
+  }
   function cacheGet(key) {
     try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; }
     catch (e) { return null; }
@@ -802,6 +866,11 @@ const App = (() => {
     input.focus();
   }
   function authErrorText(msg) {
+    if (/quota|exceeded the quota|storage is full|QuotaExceeded/i.test(msg)) {
+      return 'พื้นที่เก็บข้อมูลของเว็บในเครื่องนี้เต็ม จึงเก็บสถานะการเข้าสู่ระบบไม่ได้ — ' +
+        'กดปุ่ม "ล้างข้อมูลในเครื่อง" ด้านล่างแล้วเข้าสู่ระบบอีกครั้ง ' +
+        '(ลบแค่สำเนาข้อมูลที่โหลดมาเก็บไว้ ผลตรวจที่บันทึกไปแล้วอยู่บนเซิร์ฟเวอร์ ไม่หาย)';
+    }
     if (/Email not confirmed/i.test(msg)) {
       return 'อีเมลนี้ยังไม่ได้ยืนยัน — ให้ผู้ดูแลปิดสวิตช์ "Confirm email" ใน Supabase ' +
         '(Authentication → Sign In / Providers → Email) แล้วรันไฟล์ auth-tools.sql หนึ่งครั้ง จากนั้นลองใหม่';
@@ -843,11 +912,27 @@ const App = (() => {
         boot();
       }
     } catch (e) {
-      errBox.textContent = authErrorText(e.message || '');
+      const raw = e.message || String(e.name || '');
+      errBox.textContent = authErrorText(raw);
       errBox.classList.remove('hidden');
+      if (/quota|exceeded the quota|storage is full|QuotaExceeded/i.test(raw) ||
+          window.ASSET_STORAGE_FULL) {
+        el('clearStorageBtn').classList.remove('hidden');
+      }
     } finally {
       btn.disabled = false;
     }
+  }
+  /**
+   * ล้างสำเนาข้อมูลในเครื่องทั้งหมด (ใช้ตอนพื้นที่เต็มจนล็อกอินไม่ได้)
+   * ลบเฉพาะแคชของแอป — ไม่แตะผลตรวจที่ยังรอส่งใน IndexedDB
+   */
+  function clearStorageAndRetry() {
+    lsKeys().forEach((k) => {
+      if (k === 'avEmail' || k === 'avTheme') return;     // จำอีเมลกับธีมไว้ให้
+      if (/^av/.test(k)) lsDrop(k);
+    });
+    location.reload();
   }
   async function logout() {
     if (state.pendTimer) { clearInterval(state.pendTimer); state.pendTimer = null; }
@@ -865,9 +950,11 @@ const App = (() => {
     showOnly('loginOverlay');
     const saved = cacheGet('avEmail');
     if (saved && !el('loginEmail').value) el('loginEmail').value = saved;
+    if (window.ASSET_STORAGE_FULL) el('clearStorageBtn').classList.remove('hidden');
     if (msg) {
-      el('loginError').textContent = msg;
+      el('loginError').textContent = authErrorText(msg);
       el('loginError').classList.remove('hidden');
+      if (/quota/i.test(msg)) el('clearStorageBtn').classList.remove('hidden');
     }
   }
   function showPending() {
@@ -1033,6 +1120,7 @@ const App = (() => {
       if (!silent) busy('กำลังโหลดข้อมูล...');
       const results = await Promise.all([AssetStore.listSessions(), loadProgressSafe()]);
       state.sessions = results[0];
+      guardStorage();                   // ใกล้เต็มแล้วทิ้งแคชรอบเก่าก่อนเขียนของใหม่
       cacheSet('avSessions', state.sessions);
       if (!results[1]) {                      // ยังไม่ได้รัน asset-speed.sql — นับเองแบบเดิม
         state.logSummary = await AssetStore.loadLogsSummary();
@@ -6705,7 +6793,7 @@ const App = (() => {
   document.addEventListener('DOMContentLoaded', init);
 
   return {
-    setAuthMode, submitAuth, logout, togglePassword,
+    setAuthMode, submitAuth, logout, togglePassword, clearStorageAndRetry,
     showAccessReq, closeAccessReq, approveAccess, rejectAccess, deleteProfileAccount,
     go, refreshAll, flushQueueNow,
     setHomeSearch, setHomeStatus, setHomeSort, openSession, deleteSession, setRoundHold,

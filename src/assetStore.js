@@ -14,6 +14,59 @@ const AssetStore = (function () {
   let client = null;
 
   function cfg() { return window.ASSET_CONFIG || {}; }
+  /**
+   * ที่เก็บ session ของการล็อกอิน — ห้ามล้มเพราะพื้นที่ในเครื่องเต็มเด็ดขาด
+   * เครื่องที่ใช้มานานจะมีแคชรอบตรวจ (avMaster_/avLogs_/avCounts_) กินพื้นที่จน
+   * localStorage เต็ม แล้ว supabase-js เขียน session ไม่ได้ → ขึ้น "the quota has been
+   * exceeded" และล็อกอินไม่ผ่าน · ที่เก็บนี้จะทิ้งแคชข้อมูล (โหลดใหม่จากเซิร์ฟเวอร์ได้)
+   * เพื่อให้ session มีที่อยู่เสมอ และถ้าสุดท้ายยังไม่พอก็เก็บไว้ในหน่วยความจำแทน
+   */
+  function makeAuthStorage() {
+    const mem = {};
+    const CACHE_RE = /^av(Master_|Logs_|Counts_|Sync_|LogSummary|Sessions|Progress)/;
+    const ls = () => {
+      try { return window.localStorage; } catch (e) { return null; }
+    };
+    function freeSpace(exceptKey) {
+      const store = ls();
+      if (!store) return false;
+      let removed = false;
+      Object.keys(store).forEach((k) => {
+        if (k === exceptKey || !CACHE_RE.test(k)) return;
+        try { store.removeItem(k); removed = true; } catch (e) {}
+      });
+      return removed;
+    }
+    return {
+      getItem: function (key) {
+        const store = ls();
+        if (store) {
+          try {
+            const v = store.getItem(key);
+            if (v !== null && v !== undefined) return v;
+          } catch (e) {}
+        }
+        return Object.prototype.hasOwnProperty.call(mem, key) ? mem[key] : null;
+      },
+      setItem: function (key, value) {
+        const store = ls();
+        if (store) {
+          try { store.setItem(key, value); delete mem[key]; return; } catch (e) {}
+          if (freeSpace(key)) {
+            try { store.setItem(key, value); delete mem[key]; return; } catch (e) {}
+          }
+        }
+        mem[key] = value;      // ล็อกอินต่อได้ แต่ปิดแอปแล้วต้องล็อกอินใหม่
+        window.ASSET_STORAGE_FULL = true;
+      },
+      removeItem: function (key) {
+        const store = ls();
+        if (store) { try { store.removeItem(key); } catch (e) {} }
+        delete mem[key];
+      }
+    };
+  }
+  let authStorage = null;
   function getClient() {
     if (client) return client;
     const c = cfg();
@@ -24,8 +77,9 @@ const AssetStore = (function () {
     if (!window.supabase || !window.supabase.createClient) {
       throw new Error('ยังไม่ได้โหลด supabase-js (window.supabase)');
     }
+    authStorage = authStorage || makeAuthStorage();
     client = window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {
-      auth: { persistSession: true, autoRefreshToken: true }
+      auth: { persistSession: true, autoRefreshToken: true, storage: authStorage }
     });
     return client;
   }
