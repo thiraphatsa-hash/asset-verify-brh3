@@ -241,10 +241,22 @@ const AssetStore = (function () {
   }
   async function deleteSession(sessionId) {
     // FK เป็น on delete cascade → ทะเบียนและผลตรวจของรอบนี้ถูกลบตามอัตโนมัติ
+    // แต่ "รูปถ่ายใน Storage ไม่ได้ถูกลบตาม" ต้องลบเองก่อน ไม่งั้นค้างกินโควตา
+    let files = [];
+    try { files = await listFilesUnder(sessionId); } catch (e) { files = []; }
+    let filesRemoved = 0;
+    if (files.length) {
+      // รอบที่คัดลอกผลตรวจไปใช้ต่ออาจอ้างรูปชุดเดียวกัน จึงลบเฉพาะไฟล์ที่ไม่มีใครอ้างแล้ว
+      const { error: delErr } = await getClient().from('asset_sessions')
+        .delete().eq('session_id', sessionId);
+      fail(delErr);
+      try { filesRemoved = await removeUnreferenced(files.map((f) => f.path)); } catch (e) {}
+      return { success: true, files: files.length, filesRemoved: filesRemoved };
+    }
     const { error } = await getClient().from('asset_sessions')
       .delete().eq('session_id', sessionId);
     fail(error);
-    return { success: true };
+    return { success: true, files: 0, filesRemoved: 0 };
   }
 
   // ── ทะเบียนทรัพย์สินของรอบ ─────────────────────────────────────────────────
@@ -435,9 +447,17 @@ const AssetStore = (function () {
     return btoa(bin);
   }
   async function deleteLog(logId) {
+    // เก็บ path รูปไว้ก่อนลบแถว แล้วค่อยลบไฟล์ที่ไม่มีใครอ้างถึงแล้ว
+    let paths = [];
+    try {
+      const { data } = await getClient().from('asset_verify_log')
+        .select('photo_paths').eq('log_id', logId).maybeSingle();
+      paths = (data && data.photo_paths) || [];
+    } catch (e) { paths = []; }
     const { error } = await getClient().from('asset_verify_log')
       .delete().eq('log_id', logId);
     fail(error);
+    if (paths.length) await removeUnreferenced(paths);
     return { success: true };
   }
   /** ลบประวัติการตรวจของหลายรหัสในรอบเดียว (ใช้กับการเลือกหลายรายการ) */
@@ -445,14 +465,18 @@ const AssetStore = (function () {
     const list = (inventoryNumbers || []).filter(Boolean);
     if (!sessionId || !list.length) return { deleted: 0 };
     let deleted = 0;
+    let paths = [];
     const chunk = 100;
     for (let i = 0; i < list.length; i += chunk) {
       const part = list.slice(i, i + chunk);
       const { data, error } = await getClient().from('asset_verify_log')
-        .delete().eq('session_id', sessionId).in('inventory_number', part).select('log_id');
+        .delete().eq('session_id', sessionId).in('inventory_number', part)
+        .select('log_id, photo_paths');
       fail(error);
       deleted += (data || []).length;
+      (data || []).forEach((r) => { paths = paths.concat(r.photo_paths || []); });
     }
+    if (paths.length) await removeUnreferenced(paths);
     return { deleted: deleted };
   }
   // ── นับจำนวนตามหมวด (asset-counts.sql) ─────────────────────────────────────
@@ -504,9 +528,16 @@ const AssetStore = (function () {
     return { duplicate: true };
   }
   async function deleteCount(countId) {
+    let paths = [];
+    try {
+      const { data } = await getClient().from('asset_count_log')
+        .select('photo_paths').eq('count_id', countId).maybeSingle();
+      paths = (data && data.photo_paths) || [];
+    } catch (e) { paths = []; }
     const { error } = await getClient().from('asset_count_log')
       .delete().eq('count_id', countId);
     fail(error);
+    if (paths.length) await removeUnreferenced(paths);
     return { success: true };
   }
   /**
@@ -579,6 +610,112 @@ const AssetStore = (function () {
     return map;
   }
 
+  // ── เก็บกวาดไฟล์ใน Storage ─────────────────────────────────────────────────
+  // ⚠ ไฟล์ใน Storage ไม่ได้ผูกกับตารางในฐานข้อมูล ลบแถว (หรือ FK cascade ตอนลบรอบ)
+  // ไม่ได้ทำให้ไฟล์หายไปด้วย ต้องสั่งลบไฟล์เองทุกครั้ง ไม่งั้นค้างกินโควตาไปตลอด
+  /** ไล่รายชื่อไฟล์ทั้งหมดใต้โฟลเดอร์ (ลงลึกทุกชั้น) */
+  async function listFilesUnder(prefix) {
+    const out = [];
+    const page = 100;
+    async function walk(dir) {
+      let offset = 0;
+      for (;;) {
+        const { data, error } = await getClient().storage.from(BUCKET())
+          .list(dir, { limit: page, offset: offset, sortBy: { column: 'name', order: 'asc' } });
+        if (error) throw new Error(error.message);
+        const rows = data || [];
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+          if (row.name === '.emptyFolderPlaceholder') continue;
+          const full = dir ? dir + '/' + row.name : row.name;
+          if (row.id) {
+            out.push({
+              path: full,
+              size: (row.metadata && Number(row.metadata.size)) || 0,
+              createdAt: row.created_at || null
+            });
+          } else {
+            await walk(full);                      // เป็นโฟลเดอร์ ลงไปอีกชั้น
+          }
+        }
+        if (rows.length < page) break;
+        offset += page;
+      }
+    }
+    await walk(prefix || '');
+    return out;
+  }
+  /** ลบไฟล์เป็นชุด ครั้งละ 100 (สิทธิ์ลบไฟล์เป็นของ admin ตาม policy) */
+  async function removeFiles(paths) {
+    const list = (paths || []).filter(Boolean);
+    let removed = 0;
+    for (let i = 0; i < list.length; i += 100) {
+      const { data, error } = await getClient().storage.from(BUCKET())
+        .remove(list.slice(i, i + 100));
+      if (error) throw new Error(error.message);
+      removed += (data || []).length;
+    }
+    return removed;
+  }
+  /** ทุก path ที่ยังมีแถวอ้างถึงอยู่ (ผลตรวจ + การนับจำนวน ทุกรอบ) */
+  async function listReferencedPaths() {
+    const used = {};
+    const tables = ['asset_verify_log', 'asset_count_log'];
+    for (let t = 0; t < tables.length; t++) {
+      let from = 0;
+      for (;;) {
+        const { data, error } = await getClient().from(tables[t])
+          .select('photo_paths').not('photo_paths', 'is', null)
+          .range(from, from + 999);
+        if (error) {
+          if (/does not exist|schema cache/i.test(error.message || '')) break;   // ยังไม่มีตารางนี้
+          throw new Error(error.message);
+        }
+        (data || []).forEach((r) => {
+          (r.photo_paths || []).forEach((p) => { if (p) used[p] = true; });
+        });
+        if (!data || data.length < 1000) break;
+        from += 1000;
+      }
+    }
+    return used;
+  }
+  /** ลบไฟล์ที่ไม่มีแถวไหนอ้างถึงแล้ว (กันกรณีรอบที่คัดลอกผลตรวจมาใช้รูปร่วมกัน) */
+  async function removeUnreferenced(paths) {
+    const list = (paths || []).filter(Boolean);
+    if (!list.length) return 0;
+    let used = {};
+    try { used = await listReferencedPaths(); } catch (e) { return 0; }  // อ่านไม่ได้ = ไม่กล้าลบ
+    const gone = list.filter((p) => !used[p]);
+    if (!gone.length) return 0;
+    try { return await removeFiles(gone); } catch (e) { return 0; }
+  }
+  /**
+   * กวาดไฟล์กำพร้าทั้งบัคเก็ต — ไฟล์ที่ไม่มีผลตรวจ/การนับไหนอ้างถึงแล้ว
+   * เว้นไฟล์ที่เพิ่งอัปโหลดภายใน skipHours ชั่วโมง (อาจกำลังรอบันทึกแถวอยู่)
+   */
+  async function cleanupOrphanFiles(opts) {
+    const skipHours = (opts && opts.skipHours) || 24;
+    const files = await listFilesUnder('');
+    const used = await listReferencedPaths();
+    const cutoff = Date.now() - skipHours * 3600 * 1000;
+    const orphans = files.filter((f) => {
+      if (used[f.path]) return false;
+      const at = f.createdAt ? Date.parse(f.createdAt) : 0;
+      return !(at && at > cutoff);
+    });
+    const bytes = orphans.reduce((n, f) => n + (f.size || 0), 0);
+    const removed = orphans.length ? await removeFiles(orphans.map((f) => f.path)) : 0;
+    return {
+      scanned: files.length,
+      kept: files.length - orphans.length,
+      removed: removed,
+      bytes: bytes,
+      recentSkipped: files.filter((f) => !used[f.path] && f.createdAt &&
+        Date.parse(f.createdAt) > cutoff).length
+    };
+  }
+
   return {
     getClient, uuid,
     signIn, signOut, signUp, getSession, currentUser, getMyProfile,
@@ -588,7 +725,8 @@ const AssetStore = (function () {
     loadLogs, loadLogsSummary, loadLogsSince, roundFingerprint, loadProgress,
     saveVerify, deleteLog, deleteLogsFor, subscribeLogs, unsubscribe,
     loadCounts, saveCount, deleteCount,
-    uploadPhoto, photoUrls, downloadPhoto
+    uploadPhoto, photoUrls, downloadPhoto,
+    listFilesUnder, listReferencedPaths, cleanupOrphanFiles
   };
 })();
 window.AssetStore = AssetStore;

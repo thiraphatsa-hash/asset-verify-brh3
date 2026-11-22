@@ -610,6 +610,10 @@ tr.row-selected .col-yn, .asset-table tbody tr:hover .col-yn { background: var(-
   padding: 2px 8px; margin-left: 6px; vertical-align: 2px;
 }
 .sys-info { font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.sys-info + .field-pair { margin-top: 10px; }
+.warn-text { color: var(--dmg); font-weight: 600; }
+.danger-button { border-color: var(--no); color: var(--no); }
+.danger-button:hover { background: var(--no-bg); }
 
 /* ── Dashboard ──────────────────────────────────────────────────────────── */
 .kpi-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }

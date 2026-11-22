@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.13.0';
+  const APP_VERSION = 'v2.14.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -6667,6 +6667,57 @@ const App = (() => {
     location.reload();
   }
 
+  // ── พื้นที่เก็บรูปใน Supabase Storage ───────────────────────────────────────
+  function mb(bytes) { return (Number(bytes || 0) / 1048576).toFixed(1) + ' MB'; }
+  /** นับว่าในบัคเก็ตมีรูปกี่ไฟล์ ใช้พื้นที่เท่าไร และกี่ไฟล์ที่ไม่มีเจ้าของแล้ว */
+  async function scanStorage() {
+    if (!state.profile || state.profile.role !== 'admin') return;
+    const box = el('storageInfo');
+    box.innerHTML = '<span>กำลังตรวจ...</span>';
+    el('cleanStorageBtn').classList.add('hidden');
+    try {
+      const files = await AssetStore.listFilesUnder('');
+      const used = await AssetStore.listReferencedPaths();
+      const cutoff = Date.now() - 24 * 3600 * 1000;
+      let keepN = 0; let keepB = 0; let orphN = 0; let orphB = 0; let recent = 0;
+      files.forEach((f) => {
+        const at = f.createdAt ? Date.parse(f.createdAt) : 0;
+        if (used[f.path]) { keepN++; keepB += f.size || 0; return; }
+        if (at && at > cutoff) { recent++; keepN++; keepB += f.size || 0; return; }
+        orphN++; orphB += f.size || 0;
+      });
+      state.storageScan = { orphN: orphN, orphB: orphB };
+      box.innerHTML =
+        '<span>ไฟล์ทั้งหมด: <b>' + files.length + '</b> ไฟล์ · ' + mb(keepB + orphB) + '</span>' +
+        '<span>ยังใช้งานอยู่: <b>' + keepN + '</b> ไฟล์ · ' + mb(keepB) +
+          (recent ? ' (รวมรูปใหม่ใน 24 ชม. ' + recent + ' ไฟล์)' : '') + '</span>' +
+        '<span class="' + (orphN ? 'warn-text' : '') + '">ไม่มีเจ้าของแล้ว: <b>' + orphN +
+          '</b> ไฟล์ · ' + mb(orphB) + (orphN ? ' — กดปุ่มด้านล่างเพื่อลบคืนพื้นที่' : ' — ไม่ต้องทำอะไร') +
+        '</span>';
+      el('cleanStorageBtn').classList.toggle('hidden', !orphN);
+    } catch (e) {
+      box.innerHTML = '<span class="warn-text">ตรวจไม่สำเร็จ: ' + esc(e.message || '') + '</span>';
+    }
+  }
+  async function cleanStorage() {
+    if (!state.profile || state.profile.role !== 'admin') return;
+    const scan = state.storageScan || { orphN: 0, orphB: 0 };
+    const msg = 'ลบรูปที่ไม่มีผลตรวจอ้างถึงแล้ว ' + scan.orphN + ' ไฟล์ (' + mb(scan.orphB) + ') ถาวร?\n\n' +
+      'รูปของผลตรวจที่ยังอยู่ และรูปที่เพิ่งถ่ายใน 24 ชั่วโมงล่าสุด จะไม่ถูกลบ\n' +
+      'การลบนี้กู้คืนไม่ได้';
+    if (!window.confirm(msg)) return;
+    try {
+      busy('กำลังลบรูปที่ไม่มีเจ้าของ...');
+      const r = await AssetStore.cleanupOrphanFiles({ skipHours: 24 });
+      toast('ลบแล้ว ' + r.removed + ' ไฟล์ · คืนพื้นที่ ' + mb(r.bytes), 'success');
+      await scanStorage();
+    } catch (e) {
+      toast('ลบไม่สำเร็จ: ' + e.message, 'error');
+    } finally {
+      busyHide();
+    }
+  }
+
   // ── init ───────────────────────────────────────────────────────────────────
   function init() {
     el('sessionList').addEventListener('click', (ev) => {
@@ -6817,6 +6868,6 @@ const App = (() => {
     toggleCatPicker, closeCatPicker, renderCatPicker, toggleCat, pickAllCats,
     formatBulkTail, insertYY, insertN, setBulkAuto,
     openUnlisted, exportExcel, exportLayoutImage, toggleSection,
-    setUserField, clearLocalCache
+    setUserField, clearLocalCache, scanStorage, cleanStorage
   };
 })();
