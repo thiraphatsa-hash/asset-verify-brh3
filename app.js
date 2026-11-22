@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.14.0';
+  const APP_VERSION = 'v2.15.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -28,6 +28,8 @@ const App = (() => {
     scan: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M4 12h16"/>',
     chart: '<path d="M3 20h18"/><path d="M6.5 20v-6M11.5 20V6M16.5 20v-9M21 20v-4"/>',
     settings: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="17" r="2"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>',
+    moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
     refresh: '<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/>',
     logout: '<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="m15 8 4 4-4 4M19 12H9"/>',
     back: '<path d="M14 6l-6 6 6 6"/>',
@@ -166,11 +168,11 @@ const App = (() => {
       n.setAttribute('data-icon-done', '1');
     });
   }
+  // ธีมชุดเดียวกับ MCR: auto ตามเครื่อง · สว่าง · มืด (ค่าเริ่มต้น auto)
   const THEMES = [
-    { key: 'porcelain', label: 'Porcelain — ขาวสะอาด น้ำเงินกรมท่า' },
-    { key: 'graphite',  label: 'Graphite — พื้นเข้ม ทอง' },
-    { key: 'ink',       label: 'Ink & Serif — ครีม แดงเลือดหมู' },
-    { key: 'organic',   label: 'Organic — ครีมทราย ดินเผา' }
+    { key: 'auto',  label: 'ตามเครื่อง', icon: 'settings' },
+    { key: 'light', label: 'สว่าง',      icon: 'sun' },
+    { key: 'dark',  label: 'มืด',        icon: 'moon' }
   ];
   const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
     'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
@@ -827,19 +829,25 @@ const App = (() => {
     return 'ย้ายออก' + (log.moveToSite ? ' → ' + log.moveToSite : '');
   }
   // ── ธีมหน้าเว็บ (4 แบบตามไฟล์ต้นแบบ) ───────────────────────────────────────
+  /**
+   * ตั้งธีม — auto = ปล่อยให้ CSS ตามการตั้งค่าของเครื่อง (ไม่ใส่ data-theme)
+   * สคริปต์สั้นๆ ใน <head> ตั้งค่าเดียวกันนี้ก่อน CSS ทำงาน ไม่ให้จอขาววาบ
+   */
   function applyTheme(key) {
-    const t = THEMES.some((x) => x.key === key) ? key : 'porcelain';
-    document.documentElement.setAttribute('data-theme', t);
+    const t = THEMES.some((x) => x.key === key) ? key : 'auto';
+    const root = document.documentElement;
+    if (t === 'auto') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', t);
     cacheSet('avTheme', t);
-    const sel = el('themeSelect');
-    if (sel) sel.value = t;
+    document.querySelectorAll('#themeSeg button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.theme === t);
+    });
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) {
-      meta.content = getComputedStyle(document.documentElement)
-        .getPropertyValue('--accent').trim() || '#1B3A6B';
+      meta.content = getComputedStyle(root).getPropertyValue('--band-1').trim() || '#0B1118';
     }
   }
-  function setTheme(key) { applyTheme(key); toast('เปลี่ยนธีมแล้ว', 'success'); }
+  function setTheme(key) { applyTheme(key); }
 
   // ── Auth ───────────────────────────────────────────────────────────────────
   function setAuthMode(mode) {
@@ -6644,12 +6652,13 @@ const App = (() => {
   }
   function renderManage() {
     loadUsers(true);
-    const sel = el('themeSelect');
-    if (sel && !sel.options.length) {
-      sel.innerHTML = THEMES.map((t) =>
-        '<option value="' + t.key + '">' + esc(t.label) + '</option>').join('');
+    const seg = el('themeSeg');
+    if (seg && !seg.children.length) {
+      seg.innerHTML = THEMES.map((t) =>
+        '<button type="button" data-theme="' + t.key + '" onclick="App.setTheme(\'' + t.key + '\')">' +
+        icon(t.icon) + esc(t.label) + '</button>').join('');
     }
-    if (sel) { sel.value = cacheGet('avTheme') || 'porcelain'; syncCombo('themeSelect'); }
+    applyTheme(cacheGet('avTheme') || 'auto');
     const totalAssets = state.sessions.reduce((n, s) => n + (s.assetCount || 0), 0);
     el('sysInfo').innerHTML =
       '<span>เวอร์ชัน: ' + APP_VERSION + '</span>' +
@@ -6829,7 +6838,7 @@ const App = (() => {
     });
     el('colPanel').addEventListener('click', (ev) => ev.stopPropagation());
     el('actList').addEventListener('click', (ev) => ev.stopPropagation());
-    applyTheme(cacheGet('avTheme') || 'porcelain');
+    applyTheme(cacheGet('avTheme') || 'auto');
     // คอลัมน์ที่ผู้ใช้เลือกไว้เอง (ต่อประเภททรัพย์สิน)
     ['FIXED', 'RENTAL'].forEach((t) => {
       const saved = cacheGet('avCols_' + t);
