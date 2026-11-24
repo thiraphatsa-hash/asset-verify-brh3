@@ -3,13 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <meta name="theme-color" content="#1B3A6B">
+  <meta name="theme-color" content="#0B1118">
   <title>ระบบตรวจนับทรัพย์สิน</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Noto+Serif+Thai:wght@400;500;600&family=Anuphan:wght@300;400;500;600&family=Chonburi&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.14.0">
+  <link rel="stylesheet" href="styles.css?v=2.17.0">
+  <script>
+    // ตั้งธีมก่อน CSS ทำงาน ไม่ให้จอขาววาบแล้วค่อยมืดตอนเปิดแอป
+    (function () {
+      try {
+        var t = JSON.parse(localStorage.getItem('avTheme') || '""');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <div id="appLoader" class="app-loader">
@@ -232,11 +241,14 @@
           </div>
         </div>
 
-        <div id="tableWrap" class="table-wrap">
-          <table class="asset-table">
-            <thead id="assetThead"></thead>
-            <tbody id="assetTbody"></tbody>
-          </table>
+        <div id="tableCard" class="table-card">
+          <div id="tableWrap" class="table-wrap">
+            <table class="asset-table">
+              <thead id="assetThead"></thead>
+              <tbody id="assetTbody"></tbody>
+            </table>
+          </div>
+          <div id="tableFoot" class="table-foot"></div>
         </div>
         <div id="cardWrap" class="asset-list hidden"></div>
       </section>
@@ -293,6 +305,8 @@
           <div class="dash-actions">
             <button class="outline-button" type="button" onclick="App.exportLayoutImage()"><span data-icon="image"></span> ผังดาวเทียม (PNG)</button>
             <button class="outline-button" type="button" onclick="App.exportExcel()"><span data-icon="download"></span> ดาวน์โหลด Excel</button>
+            <button class="outline-button" type="button" onclick="App.resetDashOrder()"
+              title="คืนลำดับการ์ดเป็นค่าเริ่มต้น"><span data-icon="refresh"></span> เรียงการ์ดใหม่</button>
           </div>
         </div>
         <div id="dashContent"></div>
@@ -309,9 +323,10 @@
           <div id="usersList" class="users-list"></div>
         </div>
         <div class="card">
-          <h3>ธีมหน้าเว็บ</h3>
-          <p class="hint">เลือกโทนสีที่ใช้ทั้งระบบ — ระบบจำไว้ให้ในเครื่องนี้</p>
-          <select id="themeSelect" class="filter-select" onchange="App.setTheme(this.value)"></select>
+          <h3>โหมดสว่าง / มืด</h3>
+          <p class="hint">ชุดสีเดียวกับระบบ MCR — เลือก "ตามเครื่อง" ให้สลับเองตามการตั้งค่าของมือถือ
+            (ระบบจำไว้ให้ในเครื่องนี้)</p>
+          <div id="themeSeg" class="theme-seg"></div>
         </div>
 
         <div class="card">
@@ -743,9 +758,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.14.0" defer></script>
-  <script src="config.js?v=2.14.0"></script>
-  <script src="src/assetStore.js?v=2.14.0"></script>
-  <script src="app.js?v=2.14.0"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.17.0" defer></script>
+  <script src="config.js?v=2.17.0"></script>
+  <script src="src/assetStore.js?v=2.17.0"></script>
+  <script src="app.js?v=2.17.0"></script>
 </body>
 </html>

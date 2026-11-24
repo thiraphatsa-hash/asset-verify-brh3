@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.14.0';
+  const APP_VERSION = 'v2.17.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -26,21 +26,25 @@ const App = (() => {
     home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-6h5v6"/>',
     table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 15h18M9 9.5V20"/>',
     scan: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M4 12h16"/>',
-    chart: '<path d="M3 20h18"/><path d="M6.5 20v-6M11.5 20V6M16.5 20v-9M21 20v-4"/>',
+    chart: '<path d="M3 20h18"/><path class="ic-1" d="M6.5 20v-6"/><path class="ic-2" d="M11.5 20V6"/><path class="ic-3" d="M16.5 20v-9"/><path class="ic-4" d="M21 20v-4"/>',
     settings: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="17" r="2"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>',
+    moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
+    grip: '<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>',
     refresh: '<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/>',
     logout: '<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="m15 8 4 4-4 4M19 12H9"/>',
     back: '<path d="M14 6l-6 6 6 6"/>',
     search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
-    plus: '<path d="M12 5v14M5 12h14"/>',
+    plus: '<path class="ic-1" d="M12 5v14M5 12h14"/>',
     bolt: '<path d="M13 3 5 13h6l-1 8 8-10h-6z"/>',
     flash: '<path d="M12 3a5 5 0 0 1 5 5c0 1.9-1.1 2.9-1.7 4.1-.3.6-.4 1.2-.4 1.9H9.1c0-.7-.1-1.3-.4-1.9C8.1 10.9 7 9.9 7 8a5 5 0 0 1 5-5z"/><path d="M10 17.5h4M10.6 20.5h2.8"/>',
-    download: '<path d="M12 4v11M8 11l4 4 4-4"/><path d="M5 19h14"/>',
-    upload: '<path d="M12 20V9M8 12l4-4 4 4"/><path d="M5 4h14"/>',
+    // ไอคอนที่ขยับได้ แยก path เป็นชิ้น .ic-1/.ic-2/.ic-3 ให้ CSS สั่งเล่นตอนชี้ปุ่ม
+    download: '<path class="ic-1" d="M12 4v11"/><path class="ic-2" d="M8 11l4 4 4-4"/><path class="ic-3" d="M5 19h14"/>',
+    upload: '<path class="ic-1" d="M12 20V9"/><path class="ic-2" d="M8 12l4-4 4 4"/><path class="ic-3" d="M5 4h14"/>',
     trash: '<path d="M4 6h16M9 6V4h6v2M6 6l1 14h10l1-14"/><path d="M10 10v7M14 10v7"/>',
     camera: '<path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.4"/>',
     image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.7"/><path d="m5 17 4.5-4.5 3 3L16 12l3 3.5"/>',
-    check: '<path d="m4.5 12.5 5 5 10-11"/>',
+    check: '<path class="ic-1" d="m4.5 12.5 5 5 10-11"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>',
     truck: '<path d="M3 6.5h11v10H3z"/><path d="M14 9.5h4l3 3v4h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="17.5" cy="18" r="2"/>',
     user: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
@@ -65,7 +69,9 @@ const App = (() => {
   function icon(name, cls) {
     const body = ICONS[name];
     if (!body) return '';
-    return '<svg class="ic' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" fill="none" ' +
+    // data-ic = ชื่อไอคอน ให้ CSS สั่ง animation ได้ (ไม่ใช้ data-icon เพราะ hydrateIcons จองไว้)
+    return '<svg class="ic' + (cls ? ' ' + cls : '') + '" data-ic="' + name + '" ' +
+      'viewBox="0 0 24 24" fill="none" ' +
       'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
       'aria-hidden="true">' + body + '</svg>';
   }
@@ -166,11 +172,11 @@ const App = (() => {
       n.setAttribute('data-icon-done', '1');
     });
   }
+  // ธีมชุดเดียวกับ MCR: auto ตามเครื่อง · สว่าง · มืด (ค่าเริ่มต้น auto)
   const THEMES = [
-    { key: 'porcelain', label: 'Porcelain — ขาวสะอาด น้ำเงินกรมท่า' },
-    { key: 'graphite',  label: 'Graphite — พื้นเข้ม ทอง' },
-    { key: 'ink',       label: 'Ink & Serif — ครีม แดงเลือดหมู' },
-    { key: 'organic',   label: 'Organic — ครีมทราย ดินเผา' }
+    { key: 'auto',  label: 'ตามเครื่อง', icon: 'settings' },
+    { key: 'light', label: 'สว่าง',      icon: 'sun' },
+    { key: 'dark',  label: 'มืด',        icon: 'moon' }
   ];
   const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
     'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
@@ -827,19 +833,25 @@ const App = (() => {
     return 'ย้ายออก' + (log.moveToSite ? ' → ' + log.moveToSite : '');
   }
   // ── ธีมหน้าเว็บ (4 แบบตามไฟล์ต้นแบบ) ───────────────────────────────────────
+  /**
+   * ตั้งธีม — auto = ปล่อยให้ CSS ตามการตั้งค่าของเครื่อง (ไม่ใส่ data-theme)
+   * สคริปต์สั้นๆ ใน <head> ตั้งค่าเดียวกันนี้ก่อน CSS ทำงาน ไม่ให้จอขาววาบ
+   */
   function applyTheme(key) {
-    const t = THEMES.some((x) => x.key === key) ? key : 'porcelain';
-    document.documentElement.setAttribute('data-theme', t);
+    const t = THEMES.some((x) => x.key === key) ? key : 'auto';
+    const root = document.documentElement;
+    if (t === 'auto') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', t);
     cacheSet('avTheme', t);
-    const sel = el('themeSelect');
-    if (sel) sel.value = t;
+    document.querySelectorAll('#themeSeg button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.theme === t);
+    });
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) {
-      meta.content = getComputedStyle(document.documentElement)
-        .getPropertyValue('--accent').trim() || '#1B3A6B';
+      meta.content = getComputedStyle(root).getPropertyValue('--band-1').trim() || '#0B1118';
     }
   }
-  function setTheme(key) { applyTheme(key); toast('เปลี่ยนธีมแล้ว', 'success'); }
+  function setTheme(key) { applyTheme(key); }
 
   // ── Auth ───────────────────────────────────────────────────────────────────
   function setAuthMode(mode) {
@@ -2860,7 +2872,7 @@ const App = (() => {
     const more = groups.length - shown.length;
     el('counter').textContent = 'นอกทะเบียน ' + groups.length + ' รหัส (' +
       groups.reduce((n, g) => n + g.rows.length, 0) + ' ครั้ง)';
-    el('tableWrap').classList.add('hidden');
+    el('tableCard').classList.add('hidden');
     el('cardWrap').classList.remove('hidden');
     el('cardWrap').innerHTML = shown.map((g) => {
       const latest = state.latest.get(g.inv) || g.latest;
@@ -2914,8 +2926,14 @@ const App = (() => {
     const more = all.length - list.length;
     const isFixed = state.ui.type === 'FIXED';
     const tableMode = state.ui.view === 'table';
-    el('tableWrap').classList.toggle('hidden', !tableMode);
+    el('tableCard').classList.toggle('hidden', !tableMode);
     el('cardWrap').classList.toggle('hidden', tableMode);
+    // ท้ายตารางแบบ MCR: บอกว่ากำลังแสดงกี่แถวจากทั้งหมด และเลือกไว้กี่รายการ
+    el('tableFoot').innerHTML =
+      '<span>แสดง <b>' + Math.min(list.length, all.length) + '</b> จาก <b>' + all.length +
+        '</b> รายการ' + (more > 0 ? ' · เลื่อนลงเพื่อโหลดต่อ' : '') + '</span>' +
+      '<span class="foot-count ' + (state.selection.size ? 'foot-sel' : 'text-faint') + '">เลือกไว้ ' +
+        state.selection.size + ' รายการ</span>';
 
     if (tableMode) {
       // ── โครงตารางยึดตามฟอร์มรายงานตรวจสอบทรัพย์สินต้นฉบับ (.xls) ──
@@ -3126,6 +3144,12 @@ const App = (() => {
     const n = state.selection.size;
     el('bulkBarCount').textContent = n;
     el('bulkBar').classList.toggle('hidden', n === 0 || !state.canWrite);
+    const sel = el('tableFoot') && el('tableFoot').querySelector('.foot-count');
+    if (sel) {                                       // ท้ายตารางบอกจำนวนที่เลือกแบบสดๆ
+      sel.textContent = 'เลือกไว้ ' + n + ' รายการ';
+      sel.classList.toggle('foot-sel', n > 0);
+      sel.classList.toggle('text-faint', n === 0);
+    }
     const del = el('bulkDelete');
     if (del) del.classList.toggle('hidden', !state.profile || state.profile.role !== 'admin');
   }
@@ -5125,10 +5149,125 @@ const App = (() => {
     }).join('') + '</div>';
   }
   function kpiCard(label, value, sub, tone) {
+    // ตัวเลขล้วนให้วิ่งขึ้นตอนเปิดหน้า (ลำดับ motion ชุดเดียวกับ Dashboard ของ MCR)
+    const raw = String(value);
+    const plain = raw.replace(/,/g, '');
+    const countable = /^\d+$/.test(plain);
     return '<div class="kpi ' + (tone || '') + '">' +
       '<span class="kpi-label">' + esc(label) + '</span>' +
-      '<span class="kpi-num mono">' + esc(String(value)) + '</span>' +
+      '<span class="kpi-num mono"' + (countable ? ' data-count-to="' + plain + '"' : '') + '>' +
+      esc(raw) + '</span>' +
       '<span class="kpi-sub">' + sub + '</span></div>';
+  }
+  // ── การ์ด Dashboard ที่สลับตำแหน่งได้ (ลากหรือกดปุ่ม ‹ › · จำลำดับไว้ในเครื่อง) ──
+  function dashOrdered(cards) {
+    const saved = cacheGet('avDashOrder');
+    const order = Array.isArray(saved) ? saved : [];
+    const left = {};
+    cards.forEach((c) => { left[c.key] = c; });
+    const out = [];
+    order.forEach((k) => { if (left[k]) { out.push(left[k]); delete left[k]; } });
+    cards.forEach((c) => { if (left[c.key]) out.push(c); });
+    return out;
+  }
+  function dashCardHtml(c, i) {
+    return '<section class="dash-card' + (c.wide ? ' wide' : '') + '" data-card="' + esc(c.key) +
+      '" style="--i:' + i + '">' +
+      '<header class="dash-card-head">' +
+        '<h4>' + c.title + '</h4>' +
+        '<div class="card-move">' +
+          '<button type="button" class="card-grip" title="ลากเพื่อสลับตำแหน่ง" aria-label="ลากการ์ด">' +
+            icon('grip') + '</button>' +
+          '<button type="button" onclick="App.moveDashCard(\'' + esc(c.key) + '\', -1)" ' +
+            'title="เลื่อนขึ้น" aria-label="เลื่อนการ์ดขึ้น">‹</button>' +
+          '<button type="button" onclick="App.moveDashCard(\'' + esc(c.key) + '\', 1)" ' +
+            'title="เลื่อนลง" aria-label="เลื่อนการ์ดลง">›</button>' +
+        '</div>' +
+      '</header>' +
+      '<div class="dash-card-body">' + c.body + '</div></section>';
+  }
+  /** เรียง DOM ใหม่ตามลำดับที่ให้มา แล้วจำไว้ */
+  function applyDashOrder(keys) {
+    const grid = el('dashGrid');
+    if (!grid) return;
+    keys.forEach((k) => {
+      const node = grid.querySelector('[data-card="' + k + '"]');
+      if (node) grid.appendChild(node);
+    });
+    cacheSet('avDashOrder', keys);
+  }
+  function gridKeys() {
+    const grid = el('dashGrid');
+    return grid ? Array.prototype.map.call(grid.children, (n) => n.dataset.card) : [];
+  }
+  function moveDashCard(key, dir) {
+    const keys = gridKeys();
+    const i = keys.indexOf(key);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= keys.length) return;
+    keys.splice(j, 0, keys.splice(i, 1)[0]);
+    applyDashOrder(keys);
+    const node = el('dashGrid').querySelector('[data-card="' + key + '"]');
+    if (node) {
+      node.classList.remove('card-moved');
+      void node.offsetWidth;                       // รีสตาร์ท animation ให้เห็นว่าย้ายไปไหน
+      node.classList.add('card-moved');
+      node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
+  function resetDashOrder() {
+    cacheSet('avDashOrder', []);
+    renderDash();
+    toast('เรียงการ์ดกลับเป็นค่าเริ่มต้นแล้ว', 'success');
+  }
+  /** ลากการ์ดสลับตำแหน่ง — ใช้ Pointer Events จึงลากได้ทั้งเมาส์และนิ้ว */
+  function startCardDrag(ev) {
+    const grip = ev.target.closest('.card-grip');
+    if (!grip) return;
+    const card = grip.closest('.dash-card');
+    const grid = el('dashGrid');
+    if (!card || !grid) return;
+    ev.preventDefault();
+    card.classList.add('card-dragging');
+    try { grip.setPointerCapture(ev.pointerId); } catch (e) {}
+    const move = (e) => {
+      const over = document.elementFromPoint(e.clientX, e.clientY);
+      const target = over && over.closest ? over.closest('.dash-card') : null;
+      if (!target || target === card || target.parentElement !== grid) return;
+      const rect = target.getBoundingClientRect();
+      const after = (e.clientY - rect.top) > rect.height / 2;
+      grid.insertBefore(card, after ? target.nextSibling : target);
+    };
+    const end = () => {
+      card.classList.remove('card-dragging');
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', end);
+      document.removeEventListener('pointercancel', end);
+      cacheSet('avDashOrder', gridKeys());
+    };
+    // ฟังที่ document ไม่ใช่ที่ปุ่ม — นิ้วเลื่อนออกนอกปุ่มแล้วยังลากต่อได้
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
+  }
+  /** ตัวเลขวิ่งขึ้นตอนเปิดหน้า — ข้ามให้ทันทีถ้าเครื่องตั้ง "ลดการเคลื่อนไหว" */
+  function animateCounts(root) {
+    const nodes = (root || document).querySelectorAll('[data-count-to]');
+    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    nodes.forEach((n) => {
+      const to = Number(n.getAttribute('data-count-to'));
+      if (!isFinite(to)) return;
+      if (reduced || to <= 0) { n.textContent = to.toLocaleString(); return; }
+      const dur = 650;
+      const t0 = performance.now();
+      const step = (t) => {
+        const k = Math.min((t - t0) / dur, 1);
+        const eased = 1 - Math.pow(1 - k, 3);
+        n.textContent = Math.round(to * eased).toLocaleString();
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
   }
   function renderDash() {
     const s = state.activeSession;
@@ -5195,6 +5334,8 @@ const App = (() => {
         ' · ' + esc(thaiDT(l.verifiedAt)) + '</b></div>');
 
     el('dashContent').innerHTML =
+      '<div class="dash-hero">' +
+      '<p class="hero-label">' + esc(s.site) + (s.roundName ? ' · ' + esc(s.roundName) : '') + '</p>' +
       '<div class="kpi-row">' +
         kpiCard('ทรัพย์สินทั้งหมด', all.total.toLocaleString(),
           'Fixed ' + fx.total + ' · ของเช่า ' + rn.total, '') +
@@ -5206,43 +5347,44 @@ const App = (() => {
           'tone-no') +
         kpiCard('ย้ายออก / พบเพิ่ม', all.moved + ' / ' + extraCount,
           'ย้ายไปไซต์อื่น ' + all.moved + ' · นอกทะเบียน ' + extraCount, 'tone-mv') +
-      '</div>' +
-      '<div class="dash-grid">' +
-        '<div class="dash-card"><h4>สัดส่วนผลการตรวจ</h4>' +
-          '<div class="donut-wrap">' + donutSvg(parts, pct + '%', 'ตรวจแล้ว') +
-          legendRows(parts, all.total) + '</div></div>' +
-        '<div class="dash-card"><h4>จำนวนที่ตรวจต่อวัน (14 วันล่าสุด)</h4>' +
-          dailyBars(logs) + '</div>' +
-        '<div class="dash-card"><h4>ความคืบหน้า — Fixed Assets</h4>' +
-          '<div class="progress-line"><span>ตรวจแล้ว ' + fx.done + ' / ' + fx.total + '</span><span>' +
-          (fx.total ? Math.round(fx.done * 100 / fx.total) : 0) + '%</span></div>' +
-          '<div class="bar"><i style="width:' + (fx.total ? fx.done * 100 / fx.total : 0) + '%"></i></div>' +
-          '<div class="stat-chips">' +
-          '<span class="stat-chip st-found">พบ ' + fx.found + '</span>' +
-          '<span class="stat-chip st-notfound">ไม่พบ ' + fx.notfound + '</span>' +
-          '<span class="stat-chip st-moved">ย้ายออก ' + fx.moved + '</span>' +
-          '<span class="stat-chip st-pending">ค้าง ' + fx.pending + '</span></div>' +
-          '<h4 class="mt">ความคืบหน้า — ของเช่า</h4>' +
-          '<div class="progress-line"><span>ตรวจแล้ว ' + rn.done + ' / ' + rn.total + '</span><span>' +
-          (rn.total ? Math.round(rn.done * 100 / rn.total) : 0) + '%</span></div>' +
-          '<div class="bar"><i style="width:' + (rn.total ? rn.done * 100 / rn.total : 0) + '%"></i></div>' +
-          '<div class="stat-chips">' +
-          '<span class="stat-chip st-found">พบ ' + rn.found + '</span>' +
-          '<span class="stat-chip st-notfound">ไม่พบ ' + rn.notfound + '</span>' +
-          '<span class="stat-chip st-moved">ย้ายออก ' + rn.moved + '</span>' +
-          '<span class="stat-chip st-pending">ค้าง ' + rn.pending + '</span></div></div>' +
-        '<div class="dash-card"><h4>ผลงานผู้ตรวจ</h4>' +
-          (inspectorRows.join('') || '<p class="hint">ยังไม่มีการตรวจ</p>') + '</div>' +
-        '<div class="dash-card"><h4>ตามหมวด — Fixed Assets</h4>' +
-          groupBars(fixedList, (a) => 'RT-' + (a.categoryCode || '?')) + '</div>' +
-        '<div class="dash-card"><h4>ตามหมวด — ของเช่า</h4>' +
-          groupBars(rentalList, (a) => 'RT-' + (a.categoryCode || '?')) + '</div>' +
-        '<div class="dash-card wide"><h4>ตามผู้รับผิดชอบ (Fixed Assets)</h4>' +
-          groupBars(fixedList, (a) => (a.staffText || '').trim()) + '</div>' +
-        (state.master.some((a) => (a.location || '').trim())
-          ? '<div class="dash-card wide"><h4>' + icon('pin') + ' ตามพื้นที่จัดเก็บ</h4>' +
-            groupBars(state.master, (a) => areaLabel(a.location) || '(ไม่ระบุพื้นที่)') + '</div>'
-          : '') +
+      '</div></div>' +
+      '<div id="dashGrid" class="dash-grid">' +
+        dashOrdered([
+          { key: 'donut', title: 'สัดส่วนผลการตรวจ',
+            body: '<div class="donut-wrap">' + donutSvg(parts, pct + '%', 'ตรวจแล้ว') +
+              legendRows(parts, all.total) + '</div>' },
+          { key: 'daily', title: 'จำนวนที่ตรวจต่อวัน (14 วันล่าสุด)', body: dailyBars(logs) },
+          { key: 'progress', title: 'ความคืบหน้าการตรวจนับ',
+            body: '<p class="card-sub">Fixed Assets</p>' +
+              '<div class="progress-line"><span>ตรวจแล้ว ' + fx.done + ' / ' + fx.total + '</span><span>' +
+              (fx.total ? Math.round(fx.done * 100 / fx.total) : 0) + '%</span></div>' +
+              '<div class="bar"><i style="width:' + (fx.total ? fx.done * 100 / fx.total : 0) + '%"></i></div>' +
+              '<div class="stat-chips">' +
+              '<span class="stat-chip st-found">พบ ' + fx.found + '</span>' +
+              '<span class="stat-chip st-notfound">ไม่พบ ' + fx.notfound + '</span>' +
+              '<span class="stat-chip st-moved">ย้ายออก ' + fx.moved + '</span>' +
+              '<span class="stat-chip st-pending">ค้าง ' + fx.pending + '</span></div>' +
+              '<p class="card-sub mt">ของเช่า</p>' +
+              '<div class="progress-line"><span>ตรวจแล้ว ' + rn.done + ' / ' + rn.total + '</span><span>' +
+              (rn.total ? Math.round(rn.done * 100 / rn.total) : 0) + '%</span></div>' +
+              '<div class="bar"><i style="width:' + (rn.total ? rn.done * 100 / rn.total : 0) + '%"></i></div>' +
+              '<div class="stat-chips">' +
+              '<span class="stat-chip st-found">พบ ' + rn.found + '</span>' +
+              '<span class="stat-chip st-notfound">ไม่พบ ' + rn.notfound + '</span>' +
+              '<span class="stat-chip st-moved">ย้ายออก ' + rn.moved + '</span>' +
+              '<span class="stat-chip st-pending">ค้าง ' + rn.pending + '</span></div>' },
+          { key: 'inspector', title: 'ผลงานผู้ตรวจ',
+            body: inspectorRows.join('') || '<p class="hint">ยังไม่มีการตรวจ</p>' },
+          { key: 'catFixed', title: 'ตามหมวด — Fixed Assets',
+            body: groupBars(fixedList, (a) => 'RT-' + (a.categoryCode || '?')) },
+          { key: 'catRental', title: 'ตามหมวด — ของเช่า',
+            body: groupBars(rentalList, (a) => 'RT-' + (a.categoryCode || '?')) },
+          { key: 'staff', title: 'ตามผู้รับผิดชอบ (Fixed Assets)', wide: true,
+            body: groupBars(fixedList, (a) => (a.staffText || '').trim()) }
+        ].concat(state.master.some((a) => (a.location || '').trim())
+          ? [{ key: 'area', title: icon('pin') + ' ตามพื้นที่จัดเก็บ', wide: true,
+              body: groupBars(state.master, (a) => areaLabel(a.location) || '(ไม่ระบุพื้นที่)') }]
+          : [])).map(dashCardHtml).join('') +
       '</div>' +
       projectCard() +
       '<div class="dash-card wide"><h4>รายการตรวจล่าสุด</h4>' +
@@ -5257,6 +5399,7 @@ const App = (() => {
       dashList('nf', icon('close') + ' ไม่พบ', notFound) +
       dashList('mv', icon('truck') + ' ย้ายออกไปไซต์อื่น', moved) +
       dashList('un', icon('plus') + ' ทรัพย์สินนอกทะเบียน', unl);
+    animateCounts(el('dashContent'));
     initMap();
   }
   function toggleSection(id) {
@@ -6644,12 +6787,13 @@ const App = (() => {
   }
   function renderManage() {
     loadUsers(true);
-    const sel = el('themeSelect');
-    if (sel && !sel.options.length) {
-      sel.innerHTML = THEMES.map((t) =>
-        '<option value="' + t.key + '">' + esc(t.label) + '</option>').join('');
+    const seg = el('themeSeg');
+    if (seg && !seg.children.length) {
+      seg.innerHTML = THEMES.map((t) =>
+        '<button type="button" data-theme="' + t.key + '" onclick="App.setTheme(\'' + t.key + '\')">' +
+        icon(t.icon) + esc(t.label) + '</button>').join('');
     }
-    if (sel) { sel.value = cacheGet('avTheme') || 'porcelain'; syncCombo('themeSelect'); }
+    applyTheme(cacheGet('avTheme') || 'auto');
     const totalAssets = state.sessions.reduce((n, s) => n + (s.assetCount || 0), 0);
     el('sysInfo').innerHTML =
       '<span>เวอร์ชัน: ' + APP_VERSION + '</span>' +
@@ -6765,11 +6909,13 @@ const App = (() => {
       openAsset(row.dataset.inv);
     });
     el('dashContent').addEventListener('click', (ev) => {
+      if (ev.target.closest('.card-move')) return;     // ปุ่มสลับตำแหน่งการ์ด จัดการเอง
       const coll = ev.target.closest('.collapse-head');
       if (coll) return toggleSection(coll.dataset.coll);
       const row = ev.target.closest('.dash-list-item');
       if (row && row.dataset.inv) openAsset(row.dataset.inv);
     });
+    el('dashContent').addEventListener('pointerdown', startCardDrag);
     el('pickList').addEventListener('click', (ev) => {
       const btn = ev.target.closest('button[data-code]');
       if (btn) pickChoose(btn.dataset.code);
@@ -6829,7 +6975,7 @@ const App = (() => {
     });
     el('colPanel').addEventListener('click', (ev) => ev.stopPropagation());
     el('actList').addEventListener('click', (ev) => ev.stopPropagation());
-    applyTheme(cacheGet('avTheme') || 'porcelain');
+    applyTheme(cacheGet('avTheme') || 'auto');
     // คอลัมน์ที่ผู้ใช้เลือกไว้เอง (ต่อประเภททรัพย์สิน)
     ['FIXED', 'RENTAL'].forEach((t) => {
       const saved = cacheGet('avCols_' + t);
@@ -6868,6 +7014,7 @@ const App = (() => {
     toggleCatPicker, closeCatPicker, renderCatPicker, toggleCat, pickAllCats,
     formatBulkTail, insertYY, insertN, setBulkAuto,
     openUnlisted, exportExcel, exportLayoutImage, toggleSection,
-    setUserField, clearLocalCache, scanStorage, cleanStorage
+    setUserField, clearLocalCache, scanStorage, cleanStorage,
+    moveDashCard, resetDashOrder
   };
 })();
