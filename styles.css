@@ -1409,10 +1409,17 @@ table td { border-bottom: 1px solid var(--line-soft); }
   border: 0; border-radius: 0; box-shadow: none;
   max-height: min(68vh, 620px); overflow: auto;
 }
+/* หัวตารางติดบน: ต้องทำ sticky ที่ <thead> ไม่ใช่ที่ <th> ทีละช่อง
+   เพราะ containing block ของ th คือ "แถวของตัวเอง" → ตั้ง top ที่ th จะไม่ยึดอะไรเลย
+   และหัวตาราง 2 ชั้นจะทับกันเมื่อเนื้อตารางเลื่อน (บั๊กที่เจอจริง) */
+.asset-table thead { position: sticky; top: 0; z-index: 4; }
 .asset-table th {
+  position: static;
   background: var(--band-1); color: var(--band-ink-2);
   border-bottom: 1px solid var(--band-line); letter-spacing: .06em;
 }
+/* คอลัมน์ที่ปักขอบขวา (Yes/No และหัวกลุ่ม) ยังต้อง sticky แนวนอนเหมือนเดิม */
+.asset-table th.col-yn, .asset-table th.yn-group, .asset-table th.col-quick { position: sticky; }
 .asset-table th.th-inv, .asset-table th.th-desc { color: var(--band-ink); background: var(--band-1); }
 .asset-table th.yn-group, .asset-table th.col-yn { background: var(--band-2); color: var(--band-ink); }
 .asset-table th.col-check, .asset-table th.col-more { background: var(--band-1); }
