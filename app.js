@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.17.0';
+  const APP_VERSION = 'v2.18.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -31,6 +31,7 @@ const App = (() => {
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>',
     moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
     grip: '<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>',
+    filter: '<path d="M4 6h16M7 12h10M10 18h4"/>',
     refresh: '<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/>',
     logout: '<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="m15 8 4 4-4 4M19 12H9"/>',
     back: '<path d="M14 6l-6 6 6 6"/>',
@@ -2375,7 +2376,9 @@ const App = (() => {
     const projSel = el('projFilter');
     const groups = projectGroups(list);
     const many = multiProject();
-    projSel.classList.toggle('hidden', !many);
+    // ซ่อนทั้งช่อง (label) ไม่ใช่แค่ <select> — select ถูก combo ห่อไว้ ซ่อนแล้วปุ่มยังโผล่
+    const projField = el('projField');
+    if (projField) projField.classList.toggle('hidden', !many);
     if (!many) {
       state.ui.proj = '';
       projSel.value = '';
@@ -2920,6 +2923,7 @@ const App = (() => {
       if (classify(state.latest.get(a.inventoryNumber)) !== 'pending') done++;
     });
     el('counter').textContent = 'ตรวจแล้ว ' + done + ' / ' + all.length;
+    updateFilterCount();
     // ทะเบียนใหญ่ (KL12 = 2,487 แถว) วาดทีเดียวหมดทำให้มือถือหน่วงทั้งจอ และวาดใหม่ทุกครั้ง
     // ที่มีการบันทึก → แสดงทีละหน้า แล้วต่อให้เองเมื่อเลื่อนถึงท้ายรายการ
     const list = all.slice(0, state.ui.limit);
@@ -3054,6 +3058,54 @@ const App = (() => {
     el('viewTable').classList.toggle('active', v === 'table');
     el('viewCard').classList.toggle('active', v === 'card');
     renderList();
+  }
+  // ── แผงตัวกรอง (พับเก็บได้แบบ MCR) ─────────────────────────────────────────
+  /** เปิด/ปิดแผงตัวกรอง — จำสถานะไว้ในเครื่อง ใครชอบเปิดค้างก็เปิดค้างได้ */
+  function toggleFilters(force) {
+    const panel = el('filterPanel');
+    const btn = el('filterToggle');
+    if (!panel || !btn) return;
+    const open = force === undefined ? panel.classList.contains('hidden') : Boolean(force);
+    panel.classList.toggle('hidden', !open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    cacheSet('avFiltersOpen', open);
+    if (open) panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  /** นับว่ามีตัวกรองทำงานอยู่กี่ตัว เพื่อบอกบนปุ่มตอนแผงถูกพับ */
+  function activeFilterCount() {
+    const u = state.ui;
+    return [u.proj, u.cat, u.staff, u.area, u.status].filter(Boolean).length +
+      (u.sort && u.sort !== 'inv' ? 1 : 0);
+  }
+  function updateFilterCount() {
+    const badge = el('filterCount');
+    if (!badge) return;
+    const n = activeFilterCount();
+    badge.textContent = n;
+    badge.classList.toggle('hidden', n === 0);
+    const btn = el('filterToggle');
+    if (btn) btn.classList.toggle('has-filter', n > 0);
+  }
+  /** ล้างตัวกรองทุกตัวกลับเป็นค่าเริ่มต้น (ไม่แตะคำค้นหาและรายการที่เลือกไว้) */
+  function clearFilters() {
+    state.ui.proj = '';
+    state.ui.cat = '';
+    state.ui.staff = '';
+    state.ui.area = '';
+    state.ui.sort = 'inv';
+    state.ui.status = '';
+    ['projFilter', 'catFilter', 'staffFilter', 'areaFilter'].forEach((id) => {
+      const s = el(id);
+      if (s) { s.value = ''; syncCombo(id); }
+    });
+    const sortSel = el('sortSel');
+    if (sortSel) { sortSel.value = 'inv'; syncCombo('sortSel'); }
+    document.querySelectorAll('#statusChips .chip').forEach((c) => {
+      c.classList.toggle('active', !c.dataset.status);
+    });
+    resetLimit();
+    renderList();
+    toast('ล้างตัวกรองแล้ว', 'success');
   }
   function setSearch(v) { state.ui.q = v.trim(); resetLimit(); renderList(); }
   function setCat(v) { state.ui.cat = v; resetLimit(); renderList(); }
@@ -6976,6 +7028,7 @@ const App = (() => {
     el('colPanel').addEventListener('click', (ev) => ev.stopPropagation());
     el('actList').addEventListener('click', (ev) => ev.stopPropagation());
     applyTheme(cacheGet('avTheme') || 'auto');
+    if (cacheGet('avFiltersOpen')) toggleFilters(true);   // ใครชอบเปิดแผงค้างไว้ก็เปิดค้างให้
     // คอลัมน์ที่ผู้ใช้เลือกไว้เอง (ต่อประเภททรัพย์สิน)
     ['FIXED', 'RENTAL'].forEach((t) => {
       const saved = cacheGet('avCols_' + t);
@@ -7015,6 +7068,7 @@ const App = (() => {
     formatBulkTail, insertYY, insertN, setBulkAuto,
     openUnlisted, exportExcel, exportLayoutImage, toggleSection,
     setUserField, clearLocalCache, scanStorage, cleanStorage,
+    toggleFilters, clearFilters,
     moveDashCard, resetDashOrder
   };
 })();

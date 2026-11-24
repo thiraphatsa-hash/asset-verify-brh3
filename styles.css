@@ -1663,6 +1663,39 @@ button:disabled [data-ic] *, button:disabled [data-icon] * { animation: none !im
   .ic, .ic .ic-1, .ic .ic-2, .ic .ic-3, .ic .ic-4 { animation: none !important; }
 }
 
+/* ══ แผงตัวกรองแบบ MCR: ช่องค้นหา + ปุ่ม "ตัวกรอง" แล้วค่อยกางแผงออกมา ════ */
+.search-row { display: flex; gap: 10px; align-items: stretch; }
+.search-row .search-box { flex: 1; min-width: 0; }
+.filter-btn {
+  flex: none; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+  padding: 0 16px; min-height: 46px; border-radius: var(--r); cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  font: inherit; font-weight: 600; font-size: 14px;
+  transition: background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease);
+}
+.filter-btn:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.filter-btn[aria-expanded="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.filter-count {
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  background: var(--brand); color: #fff; font-size: 11.5px; font-weight: 700;
+  display: inline-grid; place-items: center; font-variant-numeric: tabular-nums;
+}
+.filter-btn[aria-expanded="true"] .filter-count { background: var(--brand); }
+.filter-panel {
+  margin-top: 10px; padding: 14px; border-radius: var(--r);
+  border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow-sm);
+  animation: panelIn .18s var(--ease);
+}
+@keyframes panelIn { from { opacity: 0; transform: translateY(-4px); } }
+.filter-grid { display: grid; gap: 10px; grid-template-columns: 1fr; }
+@media (min-width: 560px) { .filter-grid { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 900px) { .filter-grid { grid-template-columns: repeat(3, 1fr); } }
+.compact-field { display: grid; gap: 5px; min-width: 0; }
+.compact-field > span { font-size: 12px; font-weight: 600; color: var(--muted); }
+.compact-field .combo { width: 100%; }
+.filter-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap; }
+.filter-foot .outline-button { min-height: 40px; padding: 0 14px; font-size: 13.5px; }
+
 /* ── ปุ่มเลือกธีม 3 สถานะ (auto / light / dark) ── */
 .theme-seg {
   display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px;

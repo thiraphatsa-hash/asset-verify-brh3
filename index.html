@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=2.17.0">
+  <link rel="stylesheet" href="styles.css?v=2.18.0">
   <script>
     // ตั้งธีมก่อน CSS ทำงาน ไม่ให้จอขาววาบแล้วค่อยมืดตอนเปิดแอป
     (function () {
@@ -185,20 +185,36 @@
         </div>
 
         <div class="toolbar">
-          <label class="search-box"><span data-icon="search"></span>
-            <input id="search" type="search" placeholder="ค้นหา: รหัส / ชื่อ / Serial / ผู้รับผิดชอบ" oninput="App.setSearch(this.value)">
-            <button type="button" class="search-clear hidden" tabindex="-1" aria-label="ล้างคำค้นหา"><span data-icon="close"></span></button>
-          </label>
-          <div class="filter-row">
-            <select id="projFilter" class="filter-select hidden" onchange="App.setProj(this.value)"><option value="">โครงการ: ทั้งหมด</option></select>
-            <select id="catFilter" class="filter-select" onchange="App.setCat(this.value)"><option value="">ทุกหมวด</option></select>
-            <select id="staffFilter" class="filter-select" onchange="App.setStaff(this.value)"><option value="">ผู้รับผิดชอบ: ทั้งหมด</option></select>
-            <select id="areaFilter" class="filter-select" onchange="App.setArea(this.value)"><option value="">พื้นที่: ทั้งหมด</option></select>
-            <select id="sortSel" class="filter-select" onchange="App.setSort(this.value)">
-              <option value="inv">เรียง: รหัสทรัพย์สิน</option>
-              <option value="time">เรียง: ตรวจล่าสุดก่อน</option>
-              <option value="name">เรียง: ชื่อทรัพย์สิน</option>
-            </select>
+          <div class="search-row">
+            <label class="search-box"><span data-icon="search"></span>
+              <input id="search" type="search" placeholder="ค้นหา: รหัส / ชื่อ / Serial / ผู้รับผิดชอบ" oninput="App.setSearch(this.value)">
+              <button type="button" class="search-clear hidden" tabindex="-1" aria-label="ล้างคำค้นหา"><span data-icon="close"></span></button>
+            </label>
+            <button id="filterToggle" class="filter-btn" type="button" aria-expanded="false"
+              onclick="App.toggleFilters()"><span data-icon="filter"></span> ตัวกรอง
+              <b id="filterCount" class="filter-count hidden">0</b></button>
+          </div>
+          <div id="filterPanel" class="filter-panel hidden">
+            <div class="filter-grid">
+              <label id="projField" class="compact-field hidden"><span>โครงการ</span>
+                <select id="projFilter" class="filter-select" onchange="App.setProj(this.value)"><option value="">โครงการ: ทั้งหมด</option></select></label>
+              <label class="compact-field"><span>หมวดทรัพย์สิน</span>
+                <select id="catFilter" class="filter-select" onchange="App.setCat(this.value)"><option value="">ทุกหมวด</option></select></label>
+              <label class="compact-field"><span>ผู้รับผิดชอบ</span>
+                <select id="staffFilter" class="filter-select" onchange="App.setStaff(this.value)"><option value="">ผู้รับผิดชอบ: ทั้งหมด</option></select></label>
+              <label class="compact-field"><span>พื้นที่จัดเก็บ</span>
+                <select id="areaFilter" class="filter-select" onchange="App.setArea(this.value)"><option value="">พื้นที่: ทั้งหมด</option></select></label>
+              <label class="compact-field"><span>เรียงตาม</span>
+                <select id="sortSel" class="filter-select" onchange="App.setSort(this.value)">
+                  <option value="inv">เรียง: รหัสทรัพย์สิน</option>
+                  <option value="time">เรียง: ตรวจล่าสุดก่อน</option>
+                  <option value="name">เรียง: ชื่อทรัพย์สิน</option>
+                </select></label>
+            </div>
+            <div class="filter-foot">
+              <button class="outline-button" type="button" onclick="App.clearFilters()">ล้างตัวกรองทั้งหมด</button>
+              <button class="outline-button" type="button" onclick="App.toggleFilters()">ปิดตัวกรอง</button>
+            </div>
           </div>
           <div id="statusChips" class="filter-chips">
             <button class="chip active" data-status="" onclick="App.setStatus('')">ทั้งหมด</button>
@@ -758,9 +774,9 @@
   <div id="busyOverlay" class="busy-overlay hidden"><div class="spinner"></div><p id="busyText">กำลังดำเนินการ...</p></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="src/vendor/jsqr.min.js?v=2.17.0" defer></script>
-  <script src="config.js?v=2.17.0"></script>
-  <script src="src/assetStore.js?v=2.17.0"></script>
-  <script src="app.js?v=2.17.0"></script>
+  <script src="src/vendor/jsqr.min.js?v=2.18.0" defer></script>
+  <script src="config.js?v=2.18.0"></script>
+  <script src="src/assetStore.js?v=2.18.0"></script>
+  <script src="app.js?v=2.18.0"></script>
 </body>
 </html>
