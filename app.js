@@ -6,7 +6,7 @@
 const App = (() => {
   'use strict';
 
-  const APP_VERSION = 'v2.16.1';
+  const APP_VERSION = 'v2.17.0';
   const CFG = window.ASSET_CONFIG || {};
 
   // รูปแบบรหัสทรัพย์สิน (derive จากข้อมูลจริง — ส่วนปีมีค่า "YY" ได้)
@@ -26,7 +26,7 @@ const App = (() => {
     home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-6h5v6"/>',
     table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 15h18M9 9.5V20"/>',
     scan: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M4 12h16"/>',
-    chart: '<path d="M3 20h18"/><path d="M6.5 20v-6M11.5 20V6M16.5 20v-9M21 20v-4"/>',
+    chart: '<path d="M3 20h18"/><path class="ic-1" d="M6.5 20v-6"/><path class="ic-2" d="M11.5 20V6"/><path class="ic-3" d="M16.5 20v-9"/><path class="ic-4" d="M21 20v-4"/>',
     settings: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="17" r="2"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>',
     moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
@@ -35,15 +35,16 @@ const App = (() => {
     logout: '<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="m15 8 4 4-4 4M19 12H9"/>',
     back: '<path d="M14 6l-6 6 6 6"/>',
     search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
-    plus: '<path d="M12 5v14M5 12h14"/>',
+    plus: '<path class="ic-1" d="M12 5v14M5 12h14"/>',
     bolt: '<path d="M13 3 5 13h6l-1 8 8-10h-6z"/>',
     flash: '<path d="M12 3a5 5 0 0 1 5 5c0 1.9-1.1 2.9-1.7 4.1-.3.6-.4 1.2-.4 1.9H9.1c0-.7-.1-1.3-.4-1.9C8.1 10.9 7 9.9 7 8a5 5 0 0 1 5-5z"/><path d="M10 17.5h4M10.6 20.5h2.8"/>',
-    download: '<path d="M12 4v11M8 11l4 4 4-4"/><path d="M5 19h14"/>',
-    upload: '<path d="M12 20V9M8 12l4-4 4 4"/><path d="M5 4h14"/>',
+    // ไอคอนที่ขยับได้ แยก path เป็นชิ้น .ic-1/.ic-2/.ic-3 ให้ CSS สั่งเล่นตอนชี้ปุ่ม
+    download: '<path class="ic-1" d="M12 4v11"/><path class="ic-2" d="M8 11l4 4 4-4"/><path class="ic-3" d="M5 19h14"/>',
+    upload: '<path class="ic-1" d="M12 20V9"/><path class="ic-2" d="M8 12l4-4 4 4"/><path class="ic-3" d="M5 4h14"/>',
     trash: '<path d="M4 6h16M9 6V4h6v2M6 6l1 14h10l1-14"/><path d="M10 10v7M14 10v7"/>',
     camera: '<path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.4"/>',
     image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.7"/><path d="m5 17 4.5-4.5 3 3L16 12l3 3.5"/>',
-    check: '<path d="m4.5 12.5 5 5 10-11"/>',
+    check: '<path class="ic-1" d="m4.5 12.5 5 5 10-11"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>',
     truck: '<path d="M3 6.5h11v10H3z"/><path d="M14 9.5h4l3 3v4h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="17.5" cy="18" r="2"/>',
     user: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
@@ -68,7 +69,9 @@ const App = (() => {
   function icon(name, cls) {
     const body = ICONS[name];
     if (!body) return '';
-    return '<svg class="ic' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" fill="none" ' +
+    // data-ic = ชื่อไอคอน ให้ CSS สั่ง animation ได้ (ไม่ใช้ data-icon เพราะ hydrateIcons จองไว้)
+    return '<svg class="ic' + (cls ? ' ' + cls : '') + '" data-ic="' + name + '" ' +
+      'viewBox="0 0 24 24" fill="none" ' +
       'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
       'aria-hidden="true">' + body + '</svg>';
   }

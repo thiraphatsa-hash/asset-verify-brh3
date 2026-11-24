@@ -1582,6 +1582,87 @@ table td { border-bottom: 1px solid var(--line-soft); }
 @keyframes growY { from { transform: scaleY(0); } }
 @keyframes donutIn { from { opacity: 0; transform: scale(.9) rotate(-10deg); } }
 
+/* ══ ชั้นที่ 5: จอที่เหลือ + ไอคอนขยับ ═══════════════════════════════════ */
+
+/* ── หน้าสแกน: พื้นน้ำเงินเข้มชุดเดียวกับ scanner sheet ของ MCR ── */
+#scannerModal { background: #06172D; }
+.scanner-top { background: linear-gradient(rgba(6, 23, 45, .92), transparent); }
+.scan-status { color: #fff; }
+.scan-tool { background: rgba(255, 255, 255, .14); color: #fff; }
+.scan-tool.on { background: var(--brand); color: #fff; }
+.scanner-top .close-button { background: rgba(255, 255, 255, .14); color: #fff; }
+.scan-frame { border-color: var(--brand); box-shadow: 0 0 0 4000px rgba(6, 23, 45, .55); }
+.scan-hint { color: rgba(255, 255, 255, .78); }
+.scan-photo { background: #fff; color: var(--band-1); box-shadow: var(--shadow-lg); }
+.scan-tips { border: 1px solid var(--line); }
+.scan-notfound { border: 1px solid var(--line); box-shadow: var(--shadow-lg); }
+
+/* ── หน้าดูรูป ── */
+.photo-stage { background: var(--band-1); }
+.photo-nav { background: rgba(255, 255, 255, .9); color: var(--band-1); }
+
+/* ── สีที่ยังฮาร์ดโค้ดอยู่ → ย้ายมาอยู่บนโทเคนให้ครบตามกติกาข้อ 4 ── */
+.net-chip.online { color: #5DDCB8; }
+.net-chip.offline { color: #FF8A8E; }
+.m-scan { color: var(--dmg); }
+.m-manual { color: var(--muted); }
+.pending-sync { color: var(--dmg); }
+tr.row-selected .col-quick, .asset-table tbody tr:hover .col-quick { background: var(--accent-tint); }
+.type-badge.t-rental { background: var(--ok-bg); color: var(--ok); }
+.type-badge.t-fixed { background: var(--accent-tint); color: var(--text); }
+
+/* ── พื้นที่อัปโหลดไฟล์ทะเบียน ── */
+.upload-zone {
+  border: 1.5px dashed var(--line-strong); border-radius: var(--r);
+  background: var(--surface-2); color: var(--muted);
+  transition: border-color .15s var(--ease), background .15s var(--ease);
+}
+.upload-zone:hover { border-color: var(--brand); background: var(--brand-soft); color: var(--text); }
+
+/* ── ไอคอนขยับ (รูปทรงเดิมของเรา · จังหวะเดียวกับ MCR) ─────────────────────
+   เล่นเฉพาะตอนชี้/โฟกัสปุ่มที่หุ้มไอคอนอยู่ ไม่เล่นเองตอนโหลดหน้า */
+@keyframes icDraw  { from { stroke-dashoffset: var(--len, 24); opacity: .35; } to { stroke-dashoffset: 0; opacity: 1; } }
+@keyframes icDrop  { 0% { transform: translateY(-2px); opacity: .5; } 55% { transform: translateY(2px); } 100% { transform: none; opacity: 1; } }
+@keyframes icLift  { 0% { transform: translateY(2px); opacity: .5; } 55% { transform: translateY(-2px); } 100% { transform: none; opacity: 1; } }
+@keyframes icSpin  { to { transform: rotate(360deg); } }
+@keyframes icTurn  { from { transform: rotate(-90deg); } to { transform: none; } }
+@keyframes icNudge { 0%, 100% { transform: none; } 50% { transform: translate(1.5px, 1.5px); } }
+@keyframes icPop   { 0% { transform: scale(.5); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: none; opacity: 1; } }
+.ic { overflow: visible; }
+.ic .ic-1, .ic .ic-2, .ic .ic-3, .ic .ic-4 { transform-origin: 50% 50%; transform-box: fill-box; }
+:is(button, a, label):hover :is([data-ic="download"], [data-icon="download"]) .ic-1,
+:is(button, a, label):hover :is([data-ic="upload"], [data-icon="upload"]) .ic-1 {
+  animation: icDraw .5s var(--ease) both; --len: 14; stroke-dasharray: 14;
+}
+:is(button, a, label):hover :is([data-ic="download"], [data-icon="download"]) .ic-2 {
+  animation: icDrop .55s var(--ease) .06s both;
+}
+:is(button, a, label):hover :is([data-ic="upload"], [data-icon="upload"]) .ic-2 {
+  animation: icLift .55s var(--ease) .06s both;
+}
+:is(button, a, label):hover :is([data-ic="download"], [data-icon="download"]) .ic-3,
+:is(button, a, label):hover :is([data-ic="upload"], [data-icon="upload"]) .ic-3 {
+  animation: icDraw .6s var(--ease) .12s both; --len: 42; stroke-dasharray: 42;
+}
+:is(button, a, label):hover :is([data-ic="refresh"], [data-icon="refresh"]) { animation: icSpin .7s var(--ease); }
+:is(button, a, label):hover :is([data-ic="plus"], [data-icon="plus"]) .ic-1 { animation: icTurn .45s var(--ease); }
+:is(button, a, label):hover :is([data-ic="check"], [data-icon="check"]) .ic-1 {
+  animation: icDraw .45s var(--ease) both; --len: 26; stroke-dasharray: 26;
+}
+:is(button, a, label):hover :is([data-ic="search"], [data-icon="search"]) { animation: icNudge .5s var(--ease); }
+/* กราฟ: แท่งผุดทีละแท่งตามลำดับการอ่าน · เล่นตอนชี้ และตอนแท็บ "สรุปผล" ถูกเลือก */
+:is(button, a, label):hover :is([data-ic="chart"], [data-icon="chart"]) :is(.ic-1, .ic-2, .ic-3, .ic-4),
+.nav-btn.active [data-icon="chart"] :is(.ic-1, .ic-2, .ic-3, .ic-4) {
+  animation: icPop .42s var(--ease) var(--d, 0s) both;
+}
+[data-ic="chart"] .ic-2, [data-icon="chart"] .ic-2 { --d: .07s; }
+[data-ic="chart"] .ic-3, [data-icon="chart"] .ic-3 { --d: .14s; }
+[data-ic="chart"] .ic-4, [data-icon="chart"] .ic-4 { --d: .21s; }
+button:disabled [data-ic] *, button:disabled [data-icon] * { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .ic, .ic .ic-1, .ic .ic-2, .ic .ic-3, .ic .ic-4 { animation: none !important; }
+}
+
 /* ── ปุ่มเลือกธีม 3 สถานะ (auto / light / dark) ── */
 .theme-seg {
   display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px;
